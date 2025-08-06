@@ -6,7 +6,7 @@ let startujiciBrankar = null;
 let stridaniBrankaru = [];
 let statistiky = {};
 let rezim = "rychly";
-let infoZapasu = { datum: "", cas: "", misto: "" };
+let infoZapasu = { datum: "", cas: "", misto: "", domaci: true };
 let aktualniAkce = "strely";
 let goloveUdalosti = [];
 
@@ -39,275 +39,304 @@ function inicializujStatistiky() {
     };
   });
 }
+{
+  root.innerHTML = ""
+  zobrazHlavicku();
 
-function nastavHlavičku() {
-  const hlavicka = document.createElement("div");
-  hlavicka.className = "bg-gray-800 p-4 rounded mb-4";
-  hlavicka.innerHTML = `
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-      <div>
-        <label class="block text-sm text-gray-400">Datum</label>
-        <input type="date" value="${infoZapasu.datum}" onchange="infoZapasu.datum = this.value; render();" class="bg-gray-700 px-2 py-1 rounded w-full sm:w-auto"/>
-      </div>
-      <div>
-        <label class="block text-sm text-gray-400">Čas</label>
-        <input type="time" value="${infoZapasu.cas}" onchange="infoZapasu.cas = this.value; render();" class="bg-gray-700 px-2 py-1 rounded w-full sm:w-auto"/>
-      </div>
-      <div>
-        <label class="block text-sm text-gray-400">Místo</label>
-        <input type="text" value="${infoZapasu.misto}" onchange="infoZapasu.misto = this.value; render();" class="bg-gray-700 px-2 py-1 rounded w-full sm:w-auto"/>
-      </div>
-    </div>
-  `;
-  root.appendChild(hlavicka);
-}
-function nastavTretinu() {
-  const panel = document.createElement("div");
-  panel.className = "flex gap-2 items-center mb-4";
-  ["1", "2", "3", "P"].forEach(t => {
-    const btn = document.createElement("button");
-    btn.textContent = t === "P" ? "🕐 Prodloužení" : `${t}. třetina`;
-    btn.className = aktivniTretina === t ? "bg-blue-700 text-white px-2 py-1 rounded" : "bg-gray-300 text-black px-2 py-1 rounded";
-    btn.onclick = () => {
-      aktivniTretina = t;
-      render();
-    };
-    panel.appendChild(btn);
-  });
-  root.appendChild(panel);
-}
-
-function nastavRezim() {
-  const panel = document.createElement("div");
-  panel.className = "flex gap-2 items-center mb-4";
-  ["rychly", "detail"].forEach(r => {
-    const btn = document.createElement("button");
-    btn.textContent = r === "rychly" ? "⚡ Rychlý režim" : "📋 Detailní statistiky";
-    btn.className = rezim === r ? "bg-blue-700 text-white px-2 py-1 rounded" : "bg-gray-300 text-black px-2 py-1 rounded";
-    btn.onclick = () => {
-      rezim = r;
-      render();
-    };
-    panel.appendChild(btn);
-  });
-  root.appendChild(panel);
-}
-
-function nastavAkcePanel() {
   const akcePanel = document.createElement("div");
-  akcePanel.className = "flex flex-wrap gap-2 mb-4";
+  akcePanel.className = "flex flex-wrap gap-2 px-4 py-2";
+
   const typy = [
     ["strely", "🎯 Střela"],
-    ["goly", "🥅 Gól"],
+    ["goly", "⚽ Gól"],
     ["asistence", "🅰️ Asistence"],
     ["plus", "+ na ledě"],
     ["minus", "− na ledě"],
     ["tresty", "⛔ Trest"],
     ["zasahy", "🧤 Zásah"],
-    ["obdrzene", "💥 Obdržený gól"]
+    ["obdrzene", "🎯 Obdržený gól"]
   ];
+
   typy.forEach(([typ, label]) => {
     const btn = document.createElement("button");
     btn.textContent = label;
-    btn.className = aktualniAkce === typ ? "bg-yellow-600 text-white px-2 py-1 rounded" : "bg-gray-700 px-2 py-1 rounded";
+    btn.className = aktualniAkce === typ ? "bg-blue-800 text-white px-2 py-1 rounded" : "bg-gray-300 px-2 py-1 rounded";
     btn.onclick = () => {
       aktualniAkce = typ;
       render();
     };
     akcePanel.appendChild(btn);
   });
+
   root.appendChild(akcePanel);
-}
-function handleClick(id, typ) {
-  const s = statistiky[id];
-  if (!s) return;
-  const t = aktivniTretina;
-  switch (typ) {
-    case "strely":
-      s.strely[t]++;
-      break;
-    case "goly":
-      const casG = pridejCas("Čas gólu");
-      s.goly[t].push(casG);
-      s.plus[t]++;
-      goloveUdalosti.push({ typ: "g", cas: casG, tretina: t, strelec: id, asistenti: [], plus: [id] });
-      break;
-    case "asistence":
-      s.asistence[t]++;
-      s.plus[t]++;
-      const posledniGol = goloveUdalosti.slice().reverse().find(e => e.typ === "g" && e.tretina === t);
-      if (posledniGol && posledniGol.asistenti.length < 2) {
-        posledniGol.asistenti.push(id);
-      }
-      break;
-    case "plus":
-      s.plus[t]++;
-      const lastPlus = goloveUdalosti.slice().reverse().find(e => e.typ === "g" && e.tretina === t);
-      if (lastPlus) lastPlus.plus.push(id);
-      break;
-    case "minus":
-      s.minus[t]++;
-      const casO = pridejCas("Čas obdrženého gólu");
-      s.obdrzene[t].push(casO);
-      goloveUdalosti.push({ typ: "o", cas: casO, tretina: t, minus: [id] });
-      break;
-    case "tresty":
-      const casT = pridejCas("Čas trestu");
-      s.tresty[t].push(casT);
-      break;
-    case "zasahy":
-      s.zasahy[t]++;
-      break;
-    case "obdrzene":
-      const casOb = pridejCas("Čas obdrženého gólu");
-      s.obdrzene[t].push(casOb);
-      break;
-  }
-  render();
-}
 
-function vykresliHraceGrid() {
   const grid = document.createElement("div");
-  grid.className = "grid grid-cols-4 gap-2 mb-6";
+  grid.className = "grid grid-cols-4 gap-2 p-4";
 
-  // Seřazení: Brankáři (B), Obránci (O), Útočníci (Ú)
-  const poradi = { B: 0, O: 1, Ú: 2 };
-  const serazeni = [...hraci].sort((a, b) => {
-    return (poradi[a.typ] - poradi[b.typ]) || (a.petka - b.petka);
-  });
+  const barvyPetek = ["bg-blue-600", "bg-green-600", "bg-purple-600", "bg-orange-600", "bg-pink-600"];
 
-  serazeni.forEach((h) => {
+  hraci.forEach((hrac) => {
+    const cislo = hrac.jmeno.includes("#") ? hrac.jmeno.split("#")[0] : hrac.jmeno;
     const btn = document.createElement("button");
-    const cislo = h.jmeno.includes("#") ? h.jmeno.split("#")[0] : h.jmeno;
-    btn.textContent = `#${cislo}`;
-    btn.className = `py-3 rounded font-bold ${
-      h.typ === "B" ? "bg-red-600" : "bg-blue-600"
-    }`;
-    btn.onclick = () => handleClick(h.id, aktualniAkce);
+    btn.textContent = cislo;
+
+    if (hrac.typ === "B") {
+      btn.className = "bg-black text-white text-lg font-bold py-3 rounded";
+    } else {
+      const barva = barvyPetek[(hrac.petka || 1) - 1] || "bg-gray-400";
+      btn.className = `${barva} text-white text-lg font-bold py-3 rounded`;
+    }
+
+    btn.onclick = () => handleClick(hrac.id, aktualniAkce);
     grid.appendChild(btn);
   });
 
   root.appendChild(grid);
 }
+  html += `<tr class="border-t font-bold"><td>Celkem</td><td></td><td></td>
+    <td>${soucet.strely}</td><td>${soucet.goly}</td><td>${soucet.asistence}</td><td>${soucet.plus}</td>
+    <td>${soucet.minus}</td><td>${soucet.tresty}</td><td>${soucet.zasahy}</td><td>${soucet.obdrzene}</td></tr>`;
 
-function vykresliUdalosti() {
+  html += "</tbody></table>";
+  tabulka.innerHTML = html;
+  root.appendChild(tabulka);
+
+  // Gólové události
   const udalosti = document.createElement("div");
-  udalosti.className = "bg-gray-800 p-4 mt-6 rounded";
-  udalosti.innerHTML = `<h2 class="text-xl font-bold mb-2">📈 Gólové události</h2>` +
+  udalosti.className = "p-4 mt-4 bg-gray-100 dark:bg-gray-800";
+  udalosti.innerHTML = `<h2 class="text-xl font-bold mb-2">Gólové události</h2><div class="flex flex-col gap-2">` +
     goloveUdalosti.map(e => {
-      const barva = e.typ === "g" ? "text-green-300" : "text-red-300";
-      return `<div class="${barva} text-sm mb-1">
-        ${e.tretina}. tř. ${e.cas}: 
-        ${e.typ === "g" ? "Gól" : "Obdržený"} – 
-        ${ziskejJmeno(e.strelec || "")} 
+      const barva = e.typ === "g" ? "bg-green-200" : "bg-red-200";
+      return `<div class="${barva} p-2 rounded text-sm">
+        <strong>${e.tretina}. třetina ${e.cas}</strong>: 
+        ${e.typ === "g" ? "Gól" : "Obdržený gól"} – 
+        ${ziskejJmeno(e.strelec)} 
         ${e.asistenti?.length ? "(A: " + e.asistenti.map(ziskejJmeno).join(", ") + ")" : ""} 
-        ${e.plus?.length ? " +: " + e.plus.map(ziskejJmeno).join(", ") : ""} 
-        ${e.minus?.length ? " −: " + e.minus.map(ziskejJmeno).join(", ") : ""}
+        ${e.typ === "g" && e.plus?.length ? "+: " + e.plus.map(ziskejJmeno).join(", ") : ""} 
+        ${e.typ === "o" && e.minus?.length ? "−: " + e.minus.map(ziskejJmeno).join(", ") : ""}
       </div>`;
-    }).join("");
+    }).join("") + "</div>";
   root.appendChild(udalosti);
 }
-function vykresliSouhrn() {
-  const tabulka = document.createElement("div");
-  tabulka.className = "mt-6 bg-gray-800 p-4 rounded";
-  tabulka.innerHTML = `<h2 class="text-xl font-bold mb-2">📊 Statistiky po třetinách</h2>`;
 
-  const poradi = { B: 0, O: 1, Ú: 2 };
-  const podleTypu = [...hraci].sort((a, b) => poradi[a.typ] - poradi[b.typ]);
+function handleClick(id, typ) {
+  const s = statistiky[id];
+  if (!s) return;
+  const tretina = aktivniTretina;
 
-  const radky = podleTypu.map(h => {
-    const s = statistiky[h.id];
-    const jmeno = ziskejJmeno(h.id);
-    return `
-      <tr>
-        <td class="font-bold pr-2">${jmeno}</td>
-        <td>${s.strely["1"]}/${s.strely["2"]}/${s.strely["3"]}</td>
-        <td>${s.goly["1"].length}/${s.goly["2"].length}/${s.goly["3"].length}</td>
-        <td>${s.asistence["1"]}/${s.asistence["2"]}/${s.asistence["3"]}</td>
-        <td>${s.plus["1"]}/${s.plus["2"]}/${s.plus["3"]}</td>
-        <td>${s.minus["1"]}/${s.minus["2"]}/${s.minus["3"]}</td>
-        <td>${s.zasahy["1"]}/${s.zasahy["2"]}/${s.zasahy["3"]}</td>
-      </tr>`;
-  }).join("");
+  switch (typ) {
+    case "strely":
+      s.strely[tretina]++;
+      break;
 
-  tabulka.innerHTML += `
-    <table class="w-full text-sm mt-2">
-      <thead><tr class="text-left">
-        <th>Jméno</th><th>Střely</th><th>Góly</th><th>A</th><th>+</th><th>−</th><th>Zásahy</th>
-      </tr></thead>
-      <tbody>${radky}</tbody>
-    </table>`;
-  root.appendChild(tabulka);
+    case "goly":
+      const casG = pridejCas("Čas gólu");
+      s.goly[tretina].push(casG);
+      s.plus[tretina]++;
+      goloveUdalosti.push({ typ: "g", cas: casG, tretina, strelec: id, asistenti: [], plus: [id] });
+      break;
+
+    case "asistence":
+      s.asistence[tretina]++;
+      s.plus[tretina]++;
+      const lastG = goloveUdalosti.slice().reverse().find(e => e.typ === "g" && e.tretina === tretina);
+      if (lastG && lastG.asistenti.length < 2) lastG.asistenti.push(id);
+      break;
+
+    case "plus":
+      s.plus[tretina]++;
+      const lastGPlus = goloveUdalosti.slice().reverse().find(e => e.typ === "g" && e.tretina === tretina);
+      if (lastGPlus) lastGPlus.plus.push(id);
+      break;
+
+    case "minus":
+      s.minus[tretina]++;
+      const lastO = goloveUdalosti.slice().reverse().find(e => e.typ === "o" && e.tretina === tretina);
+      if (lastO) lastO.minus.push(id);
+      break;
+
+    case "tresty":
+      s.tresty[tretina].push(pridejCas("Čas trestu"));
+      break;
+
+    case "zasahy":
+      s.zasahy[tretina]++;
+      break;
+
+    case "obdrzene":
+      const casO = pridejCas("Čas obdrženého gólu");
+      s.obdrzene[tretina].push(casO);
+      goloveUdalosti.push({ typ: "o", cas: casO, tretina, strelec: id, minus: [id] });
+      break;
+  }
+
+  render();
 }
+function renderHlavicka() {
+  const header = document.createElement("div");
+  header.className = "bg-gray-200 dark:bg-gray-900 p-4 flex flex-col gap-2";
 
-function render() {
-  root.innerHTML = "";
-  nastavHlavičku();
-  nastavTretinu();
-  nastavRezim();
-  nastavAkcePanel();
-  vykresliHraceGrid();
-  vykresliUdalosti();
-  vykresliSouhrn();
-  vykresliImportExport();
-}
+  const inputGroup = document.createElement("div");
+  inputGroup.className = "flex gap-4 flex-wrap";
 
-function vykresliImportExport() {
-  const panel = document.createElement("div");
-  panel.className = "mt-6";
-
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".xlsx";
-  input.className = "bg-white text-black rounded px-2 py-1";
-  input.onchange = (e) => {
-    const file = e.target.files[0];
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const data = new Uint8Array(evt.target.result);
-      const workbook = XLSX.read(data, { type: "array" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }).slice(1);
-      hraci = rows.map((r, i) => ({
-        id: i + 1,
-        jmeno: r[1],
-        cislo: r[0],
-        typ: r[2],
-        petka: Number(r[3])
-      }));
-      inicializujStatistiky();
-      render();
+  const vstup = (label, key) => {
+    const div = document.createElement("div");
+    div.className = "flex flex-col";
+    const lbl = document.createElement("label");
+    lbl.textContent = label;
+    const inp = document.createElement("input");
+    inp.className = "px-2 py-1 rounded";
+    inp.value = infoZapasu[key];
+    inp.oninput = () => {
+      infoZapasu[key] = inp.value;
     };
-    reader.readAsArrayBuffer(file);
+    div.appendChild(lbl);
+    div.appendChild(inp);
+    return div;
   };
 
-  const btnExport = document.createElement("button");
-  btnExport.textContent = "📥 Export statistik (.xlsx)";
-  btnExport.className = "ml-4 bg-green-700 px-2 py-1 rounded";
-  btnExport.onclick = () => {
-    const data = [["Číslo", "Jméno", "Typ", "Pětka", "Střely", "Góly", "Asistence", "+", "-", "Zásahy"]];
-    hraci.forEach(h => {
-      const s = statistiky[h.id];
-      const celkem = (obj) => Object.values(obj).reduce((a, b) => typeof b === "number" ? a + b : a + (b.length || 0), 0);
-      data.push([
-        h.cislo || "", h.jmeno, h.typ, h.petka || "",
-        celkem(s.strely),
-        celkem(s.goly),
-        celkem(s.asistence),
-        celkem(s.plus),
-        celkem(s.minus),
-        celkem(s.zasahy)
-      ]);
+  inputGroup.appendChild(vstup("Datum", "datum"));
+  inputGroup.appendChild(vstup("Čas", "cas"));
+  inputGroup.appendChild(vstup("Místo", "misto"));
+
+  const domaciBox = document.createElement("div");
+  domaciBox.className = "flex flex-col";
+  const lblDomaci = document.createElement("label");
+  lblDomaci.textContent = "Domácí / Hosté";
+  const select = document.createElement("select");
+  select.className = "px-2 py-1 rounded";
+  ["domaci", "host"].forEach(opt => {
+    const o = document.createElement("option");
+    o.value = opt;
+    o.textContent = opt === "domaci" ? "Jsme domácí" : "Jsme hosté";
+    if (infoZapasu.tym === opt) o.selected = true;
+    select.appendChild(o);
+  });
+  select.onchange = () => {
+    infoZapasu.tym = select.value;
+  };
+  domaciBox.appendChild(lblDomaci);
+  domaciBox.appendChild(select);
+
+  inputGroup.appendChild(domaciBox);
+  header.appendChild(inputGroup);
+
+  // Výpočet skóre
+  const scoreBox = document.createElement("div");
+  scoreBox.className = "mt-2 font-bold";
+
+  let skoreDom = 0, skoreHos = 0;
+  const poTretinach = { "1": [0, 0], "2": [0, 0], "3": [0, 0], "P": [0, 0] };
+  goloveUdalosti.forEach(e => {
+    if (!poTretinach[e.tretina]) return;
+    const jeDomaci = infoZapasu.tym === "domaci";
+    if (e.typ === "g") {
+      jeDomaci ? poTretinach[e.tretina][0]++ : poTretinach[e.tretina][1]++;
+    }
+    if (e.typ === "o") {
+      jeDomaci ? poTretinach[e.tretina][1]++ : poTretinach[e.tretina][0]++;
+    }
+  });
+
+  Object.values(poTretinach).forEach(([d, h]) => {
+    skoreDom += d;
+    skoreHos += h;
+  });
+
+  const detail = Object.entries(poTretinach).map(([t, [d, h]]) => `${d}:${h}`).join(";");
+  scoreBox.textContent = `Skóre: ${skoreDom}:${skoreHos} (${detail})`;
+
+  header.appendChild(scoreBox);
+  root.appendChild(header);
+}
+      if (typ === "B") {
+        hodnota = s.obdrzene[t]?.length || 0;
+        soucty.obdrzene[t] += hodnota;
+      } else {
+        hodnota = s.strely[t] || 0;
+        soucty.strely[t] += hodnota;
+      }
+      html += `<td class="text-center">${hodnota}</td>`;
+      total += hodnota;
     });
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Statistiky");
-    XLSX.writeFile(wb, "statistiky_zapasu.xlsx");
-  };
+    html += `<td class="text-center font-bold">${total}</td>`;
+    row.innerHTML = html;
+    tbody.appendChild(row);
+  });
 
-  panel.appendChild(input);
-  panel.appendChild(btnExport);
-  root.appendChild(panel);
+  // Řádek celkem
+  const totalRow = document.createElement("tr");
+  totalRow.className = "font-bold bg-gray-100 dark:bg-gray-700";
+  let html = `<td class="px-2">–</td><td>Celkem</td><td>–</td><td>–</td>`;
+  ["1", "2", "3", "P"].forEach(t => {
+    const suma = soucty.strely[t] + soucty.obdrzene[t] + soucty.zasahy[t];
+    html += `<td class="text-center">${suma}</td>`;
+  });
+  html += `<td class="text-center">–</td>`;
+  totalRow.innerHTML = html;
+  tbody.appendChild(totalRow);
+
+  box.appendChild(table);
+  root.appendChild(box);
+}
+      plus: { "1": 0, "2": 0, "3": 0, "P": 0 },
+      minus: { "1": 0, "2": 0, "3": 0, "P": 0 },
+      obdrzene: { "1": [], "2": [], "3": [], "P": [] },
+      tresty: { "1": [], "2": [], "3": [], "P": [] }
+    };
+  }
+  render();
+}
+// === EXPORT STATISTIKY ===
+function exportStatistiky() {
+  const exportData = hraci.map(h => {
+    const s = statistiky[h.id];
+    const getSum = obj => Object.values(obj).reduce((a, b) => a + (typeof b === 'number' ? b : b.length), 0);
+    return {
+      Cislo: h.jmeno.split(" ")[0],
+      Jmeno: h.jmeno.split(" ").slice(1).join(" "),
+      Typ: h.typ,
+      Petka: h.petka,
+      Strely: getSum(s.strely),
+      Goly: getSum(s.goly),
+      Asistence: getSum(s.asistence),
+      Plus: getSum(s.plus),
+      Minus: getSum(s.minus),
+      Zasahy: getSum(s.zasahy),
+      Obdrzene: getSum(s.obdrzene),
+      Tresty: getSum(s.tresty)
+    };
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Statistiky");
+  XLSX.writeFile(workbook, "statistiky_export.xlsx");
 }
 
+// === Tlačítka pro import/export ===
+function renderImportExportControls() {
+  const box = document.createElement("div");
+  box.className = "flex items-center gap-4 p-4 bg-white dark:bg-gray-800 border-t";
+
+  // Import tlačítko
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".xlsx";
+  fileInput.onchange = (e) => {
+    if (e.target.files.length > 0) {
+      importSoupiska(e.target.files[0]);
+    }
+  };
+  box.appendChild(fileInput);
+
+  // Export tlačítko
+  const exportBtn = document.createElement("button");
+  exportBtn.textContent = "📤 Export statistik";
+  exportBtn.className = "bg-green-600 text-white px-4 py-2 rounded";
+  exportBtn.onclick = exportStatistiky;
+  box.appendChild(exportBtn);
+
+  root.appendChild(box);
+}
 render();
