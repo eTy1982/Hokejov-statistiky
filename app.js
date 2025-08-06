@@ -183,5 +183,6 @@ function handleClick(id, typ) \{\
 \}\
 \
 // Spust\'edme aplikaci\
-render()
+render();\
 }
+render();
