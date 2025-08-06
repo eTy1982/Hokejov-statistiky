@@ -39,68 +39,6 @@ function inicializujStatistiky() {
     };
   });
 }
-{
-  root.innerHTML = ""
-  zobrazHlavicku();
-
-  const akcePanel = document.createElement("div");
-  akcePanel.className = "flex flex-wrap gap-2 px-4 py-2";
-
-  const typy = [
-    ["strely", "🎯 Střela"],
-    ["goly", "⚽ Gól"],
-    ["asistence", "🅰️ Asistence"],
-    ["plus", "+ na ledě"],
-    ["minus", "− na ledě"],
-    ["tresty", "⛔ Trest"],
-    ["zasahy", "🧤 Zásah"],
-    ["obdrzene", "🎯 Obdržený gól"]
-  ];
-
-  typy.forEach(([typ, label]) => {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.className = aktualniAkce === typ ? "bg-blue-800 text-white px-2 py-1 rounded" : "bg-gray-300 px-2 py-1 rounded";
-    btn.onclick = () => {
-      aktualniAkce = typ;
-      render();
-    };
-    akcePanel.appendChild(btn);
-  });
-
-  root.appendChild(akcePanel);
-
-  const grid = document.createElement("div");
-  grid.className = "grid grid-cols-4 gap-2 p-4";
-
-  const barvyPetek = ["bg-blue-600", "bg-green-600", "bg-purple-600", "bg-orange-600", "bg-pink-600"];
-
-  hraci.forEach((hrac) => {
-    const cislo = hrac.jmeno.includes("#") ? hrac.jmeno.split("#")[0] : hrac.jmeno;
-    const btn = document.createElement("button");
-    btn.textContent = cislo;
-
-    if (hrac.typ === "B") {
-      btn.className = "bg-black text-white text-lg font-bold py-3 rounded";
-    } else {
-      const barva = barvyPetek[(hrac.petka || 1) - 1] || "bg-gray-400";
-      btn.className = `${barva} text-white text-lg font-bold py-3 rounded`;
-    }
-
-    btn.onclick = () => handleClick(hrac.id, aktualniAkce);
-    grid.appendChild(btn);
-  });
-
-  root.appendChild(grid);
-}
-  html += `<tr class="border-t font-bold"><td>Celkem</td><td></td><td></td>
-    <td>${soucet.strely}</td><td>${soucet.goly}</td><td>${soucet.asistence}</td><td>${soucet.plus}</td>
-    <td>${soucet.minus}</td><td>${soucet.tresty}</td><td>${soucet.zasahy}</td><td>${soucet.obdrzene}</td></tr>`;
-
-  html += "</tbody></table>";
-  tabulka.innerHTML = html;
-  root.appendChild(tabulka);
-
   // Gólové události
   const udalosti = document.createElement("div");
   udalosti.className = "p-4 mt-4 bg-gray-100 dark:bg-gray-800";
@@ -174,7 +112,7 @@ function handleClick(id, typ) {
 }
 function renderHlavicka() {
   const header = document.createElement("div");
-  header.className = "bg-gray-200 dark:bg-gray-900 p-4 flex flex-col gap-2";
+  header.className = "p-4 bg-white dark:bg-gray-900 flex flex-col gap-2";
 
   const inputGroup = document.createElement("div");
   inputGroup.className = "flex gap-4 flex-wrap";
@@ -249,44 +187,6 @@ function renderHlavicka() {
   header.appendChild(scoreBox);
   root.appendChild(header);
 }
-      if (typ === "B") {
-        hodnota = s.obdrzene[t]?.length || 0;
-        soucty.obdrzene[t] += hodnota;
-      } else {
-        hodnota = s.strely[t] || 0;
-        soucty.strely[t] += hodnota;
-      }
-      html += `<td class="text-center">${hodnota}</td>`;
-      total += hodnota;
-    });
-    html += `<td class="text-center font-bold">${total}</td>`;
-    row.innerHTML = html;
-    tbody.appendChild(row);
-  });
-
-  // Řádek celkem
-  const totalRow = document.createElement("tr");
-  totalRow.className = "font-bold bg-gray-100 dark:bg-gray-700";
-  let html = `<td class="px-2">–</td><td>Celkem</td><td>–</td><td>–</td>`;
-  ["1", "2", "3", "P"].forEach(t => {
-    const suma = soucty.strely[t] + soucty.obdrzene[t] + soucty.zasahy[t];
-    html += `<td class="text-center">${suma}</td>`;
-  });
-  html += `<td class="text-center">–</td>`;
-  totalRow.innerHTML = html;
-  tbody.appendChild(totalRow);
-
-  box.appendChild(table);
-  root.appendChild(box);
-}
-      plus: { "1": 0, "2": 0, "3": 0, "P": 0 },
-      minus: { "1": 0, "2": 0, "3": 0, "P": 0 },
-      obdrzene: { "1": [], "2": [], "3": [], "P": [] },
-      tresty: { "1": [], "2": [], "3": [], "P": [] }
-    };
-  }
-  render();
-}
 // === EXPORT STATISTIKY ===
 function exportStatistiky() {
   const exportData = hraci.map(h => {
@@ -313,7 +213,6 @@ function exportStatistiky() {
   XLSX.utils.book_append_sheet(workbook, worksheet, "Statistiky");
   XLSX.writeFile(workbook, "statistiky_export.xlsx");
 }
-
 // === Tlačítka pro import/export ===
 function renderImportExportControls() {
   const box = document.createElement("div");
@@ -339,4 +238,5 @@ function renderImportExportControls() {
 
   root.appendChild(box);
 }
+
 render();
