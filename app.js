@@ -1,19 +1,22 @@
-// HOKEJOVÁ STATISTIKA – zrychlené ovládání (klik hráč=střela, brankář=zásah)
-// Góly přes overlay, trest jako režim. Statistiky mají sloupec Zásahy. Přehled střel pod skóre.
+// HOKEJOVÁ STATISTIKA – zrychlené ovládání + opravy overlay + autosave
 
 const root = document.getElementById("root");
 
 // ---- Stav aplikace ----
-let hraci = [];                       // {id, jmeno: "12 Novák", typ: "B|O|Ú", petka: 0..5}
+let hraci = [];                       // {id, jmeno:"12 Novák", typ:"B|O|Ú", petka:0..5}
 let statistiky = {};                  // per hráč per třetina
 let goloveUdalosti = [];             // {typ:"g"|"o", cas, tretina, strelec?, asistenti[], plus[], minus[], golman?}
 let aktivniTretina = "1";            // "1"|"2"|"3"|"P"
-let infoZapasu = { datum:"", cas:"", misto:"", tym:"domaci" }; // domaci|host
-let aktivniPetka = 0;                // 0=vše
-let zamknuto = false;                // po ukončení zápasu nelze editovat
-let penaltyMode = false;             // ⛔ Trest – zap/vyp
+let infoZapasu = { datum:"", cas:"", misto:"", tym:"domaci" }; // "domaci" | "host"
+let aktivniPetka = 0;                // 0=vše, jinak 1..5
+let zamknuto = false;                // Ukončený zápas → nelze editovat
+let penaltyMode = false;             // ⛔ Trest – kliky zapisují tresty
 
-// ---- Nápovědné funkce ----
+// ---- Overlay stav ----
+let overlay = null;                   // {mode:"g"|"o", cas, shooter?, A:Set, plus:Set, goalie?, minus:Set, selectMode:"..." }
+const OVERLAY_ID = "overlay-backdrop";
+
+// ================= Pomůcky =================
 function pridejCas(popis) {
   const v = prompt(`${popis} (mm:ss)`, "00:00");
   return v || "00:00";
@@ -24,6 +27,18 @@ function sortHraci(list){
   const poradi={B:0,O:1,Ú:2};
   return [...list].sort((a,b)=>(poradi[a.typ]-poradi[b.typ]) || ((a.petka||0)-(b.petka||0)));
 }
+function barvaPetky(p){
+  switch(Number(p)){
+    case 1:return "bg-blue-600";
+    case 2:return "bg-green-600";
+    case 3:return "bg-purple-600";
+    case 4:return "bg-orange-600";
+    case 5:return "bg-pink-600";
+    default:return "bg-gray-600";
+  }
+}
+
+// ================= Inicializace statistik =================
 function resetStatistik(){
   statistiky={};
   for(const h of hraci){
@@ -41,7 +56,7 @@ function resetStatistik(){
   goloveUdalosti=[];
 }
 
-// ---- Klik na hráče = akce podle typu ----
+// ================= Klik na hráče = akce podle typu =================
 function klikHrac(h){
   if(zamknuto) return;
 
@@ -63,7 +78,7 @@ function klikHrac(h){
   render();
 }
 
-// ---- Souhrn skóre + rychlé střely ----
+// ================= Souhrn skóre + rychlé střely =================
 function souhrnSkore(){
   let dom=0, hos=0;
   const map={"1":[0,0],"2":[0,0],"3":[0,0],"P":[0,0]};
@@ -99,46 +114,51 @@ function souhrnStrely(){
   return `${nasiSum}:${soupSum} (${per})`;
 }
 
-// ---- Overlay (vstřelený / obdržený) ----
-let overlay = null; // {mode:"g"|"o", cas, shooter?, goalie?, A:Set, plus:Set, minus:Set}
-
+// ================= Overlay – otevření =================
 function otevriOverlayGolVstrel(){
   if(zamknuto) return;
   const cas = pridejCas("Čas vstřeleného gólu");
-  overlay = { mode:"g", cas, A:new Set(), plus:new Set() };
+  overlay = { mode:"g", cas, A:new Set(), plus:new Set(), shooter:null, selectMode:"shooter" };
   render();
 }
 function otevriOverlayGolObdrz(){
   if(zamknuto) return;
   const cas = pridejCas("Čas obdrženého gólu");
-  overlay = { mode:"o", cas, minus:new Set() };
+  overlay = { mode:"o", cas, minus:new Set(), goalie:null, selectMode:"goalie" };
   render();
 }
-function zavriOverlay(){ overlay=null; render(); }
+
+// ================= Overlay – DOM helpery =================
+function removeOverlayDom() {
+  const el = document.getElementById(OVERLAY_ID);
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+function zavriOverlay() {
+  overlay = null;
+  removeOverlayDom();
+  render();
+}
 function ulozOverlay(){
   if(!overlay) return;
+  removeOverlayDom(); // jistota odstranění z DOM
   const t = aktivniTretina;
 
   if(overlay.mode==="g"){
-    // vyžadujeme střelce
     if(!overlay.shooter){ alert("Vyber střelce."); return; }
     const sShooter = statistiky[overlay.shooter];
     sShooter.goly[t].push(overlay.cas);
     sShooter.plus[t]++; // střelec má +
 
-    // asistence (max 2)
-    const asistArr = Array.from(overlay.A).slice(0,2);
+    const asistArr = Array.from(overlay.A).slice(0,2); // 0–2 asistenti
     for(const id of asistArr){
       statistiky[id].asistence[t]++;
       statistiky[id].plus[t]++;
     }
-    // plus – libovolní (střelec se přidá automaticky, i kdyby nebyl kliknut)
+
     const plusArr = Array.from(overlay.plus);
     for(const id of plusArr){
-      // už jsme přidali + za asistenci i střelce; aby se nezdvojovalo, přidej jen pokud ještě nebylo
-      if(id===overlay.shooter) continue;
-      // pokud je současně v asistencích, + už má
-      if(!asistArr.includes(id)) statistiky[id].plus[t]++;
+      if(id===overlay.shooter) continue;           // střelec už + má
+      if(!asistArr.includes(id)) statistiky[id].plus[t]++; // asistent už + má
     }
 
     goloveUdalosti.push({
@@ -151,15 +171,13 @@ function ulozOverlay(){
     });
 
   }else{
-    // obdržený gól – vyžadujeme brankáře
     if(!overlay.goalie){ alert("Vyber brankáře."); return; }
     const sGoalie = statistiky[overlay.goalie];
     sGoalie.obdrzene[t].push(overlay.cas);
 
     const minusArr = Array.from(overlay.minus);
-    for(const id of minusArr){
-      statistiky[id].minus[t]++;
-    }
+    for(const id of minusArr) statistiky[id].minus[t]++;
+
     goloveUdalosti.push({
       typ:"o",
       cas: overlay.cas,
@@ -168,11 +186,12 @@ function ulozOverlay(){
       minus: minusArr
     });
   }
-  overlay=null;
+
+  overlay = null;
   render();
 }
 
-// ---- UI: Hlavička ----
+// ================= UI: Hlavička =================
 function renderHlavicka(){
   const wrap = document.createElement("div");
   wrap.className = "p-3 bg-gray-900 rounded mb-3 flex flex-col gap-3 border border-gray-700";
@@ -186,7 +205,7 @@ function renderHlavicka(){
     const i = document.createElement("input");
     i.type=type; i.value=infoZapasu[key]||"";
     i.className="px-2 py-1 rounded bg-gray-800 border border-gray-700";
-    i.oninput=()=>{infoZapasu[key]=i.value;};
+    i.oninput=()=>{infoZapasu[key]=i.value; saveState();};
     w.appendChild(l); w.appendChild(i); return w;
   };
 
@@ -243,9 +262,22 @@ function renderHlavicka(){
   bExp.textContent="📤 Export XLSX"; bExp.className="px-3 py-1 rounded bg-green-700"; bExp.onclick=exportStatistiky;
   actions.appendChild(bExp);
 
+  const bNew=document.createElement("button");
+  bNew.textContent="🆕 Nový zápas";
+  bNew.className="px-3 py-1 rounded bg-gray-700";
+  bNew.onclick=()=>{
+    if(!confirm("Smazat aktuální zápas a začít nový?")) return;
+    localStorage.removeItem("hokej-stat-state");
+    goloveUdalosti=[];
+    resetStatistik();
+    zamknuto=false; penaltyMode=false;
+    render();
+  };
+  actions.appendChild(bNew);
+
   line.appendChild(actions);
 
-  // Skóre + rychlé střely
+  // Skóre + rychlý přehled střel
   const score=document.createElement("div"); score.className="font-bold";
   score.textContent="Skóre: "+souhrnSkore();
   const shots=document.createElement("div"); shots.className="font-semibold text-sm text-gray-300";
@@ -257,7 +289,7 @@ function renderHlavicka(){
   root.appendChild(wrap);
 }
 
-// ---- Třetiny + akční lišta (jen 3 tlačítka) ----
+// ================= Třetiny + akční lišta (jen 3 tlačítka) =================
 function renderTretiny(){
   const box=document.createElement("div"); box.className="flex flex-wrap gap-2 mb-3";
   ["1","2","3","P"].forEach(t=>{
@@ -290,17 +322,7 @@ function renderAkce3(){
   root.appendChild(box);
 }
 
-// ---- Grid hráčů ----
-function barvaPetky(p){
-  switch(Number(p)){
-    case 1:return "bg-blue-600";
-    case 2:return "bg-green-600";
-    case 3:return "bg-purple-600";
-    case 4:return "bg-orange-600";
-    case 5:return "bg-pink-600";
-    default:return "bg-gray-600";
-  }
-}
+// ================= Grid hráčů =================
 function renderHraci(){
   const grid=document.createElement("div");
   grid.className="grid grid-cols-4 gap-2 mb-4";
@@ -320,7 +342,7 @@ function renderHraci(){
   root.appendChild(grid);
 }
 
-// ---- Gólové události ----
+// ================= Gólové události =================
 function renderUdalosti(){
   const box=document.createElement("div"); box.className="bg-gray-800 p-4 rounded mb-4";
   const h2=document.createElement("h2"); h2.className="text-xl font-bold mb-2"; h2.textContent="📈 Gólové události";
@@ -337,7 +359,7 @@ function renderUdalosti(){
     box.appendChild(div);
   });
 
-  // skóre + střely (znovu pro jistotu pod událostmi)
+  // skóre + střely
   const score=document.createElement("div"); score.className="mt-2 font-bold";
   score.textContent="Skóre: "+souhrnSkore();
   const shots=document.createElement("div"); shots.className="font-semibold text-sm text-gray-300";
@@ -348,7 +370,7 @@ function renderUdalosti(){
   root.appendChild(box);
 }
 
-// ---- Statistiky po třetinách: sloupec Zásahy (1/2/3/P) ----
+// ================= Statistiky po třetinách (Zásahy zvláštní sloupec) =================
 function renderStatistiky(){
   const box=document.createElement("div"); box.className="bg-gray-800 p-4 rounded";
   const h2=document.createElement("h2"); h2.className="text-xl font-bold mb-2"; h2.textContent="📊 Statistiky po třetinách";
@@ -378,24 +400,21 @@ function renderStatistiky(){
 
     let row=`<td>${cislo}</td><td>${h.jmeno}</td><td>${h.typ}</td><td>${h.petka||"-"}</td>`;
     let total=0;
-    const per=[], perZ=[];
+    const perZ=[];
 
     ["1","2","3","P"].forEach(t=>{
       if(h.typ==="B"){
         const ob = (s.obdrzene[t]||[]).length;
         const za = (s.zasahy[t]||0);
-        sumObdr[t]+=ob;
-        sumZasahy[t]+=za;
-        per.push(ob);
+        sumObdr[t]+=ob; sumZasahy[t]+=za;
+        total += ob; // u brankáře je "Celkem" = obdržené góly
         perZ.push(za);
-        total += ob; // pro gólmany v „Celkem“ dává smysl obdržené (ne zásahy)
         row += `<td class="text-center">${ob}</td>`;
       }else{
         const st = (s.strely[t]||0);
         sumStrely[t]+=st;
-        per.push(st);
-        perZ.push(0);
         total += st;
+        perZ.push(0);
         row += `<td class="text-center">${st}</td>`;
       }
     });
@@ -406,7 +425,7 @@ function renderStatistiky(){
     tbody.appendChild(tr);
   });
 
-  // Řádek zásahy – už jsou v samostatném sloupci u hráčů, ale přidáme info: součtový řádek Celkem (střely hráčů + obdržené góly gólmanů)
+  // Řádek součtů (střely hráčů + obdržené góly gólmanů); zásahy sem NE
   const trSum=document.createElement("tr"); trSum.className="font-bold";
   let r=`<td>–</td><td>Celkem</td><td>–</td><td>–</td>`;
   ["1","2","3","P"].forEach(t=>{
@@ -419,103 +438,128 @@ function renderStatistiky(){
   root.appendChild(box);
 }
 
-// ---- Overlay UI ----
-function renderOverlay(){
-  if(!overlay) return;
-  const backdrop=document.createElement("div");
-  backdrop.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;";
-  backdrop.onclick=(e)=>{ if(e.target===backdrop) zavriOverlay(); };
+// ================= Overlay UI (s režimy výběru) =================
+function renderOverlay() {
+  if (!overlay) return;
 
-  const card=document.createElement("div");
-  card.className="bg-white text-black rounded p-4 max-w-4xl w-[95%] relative";
-  const close=document.createElement("button");
-  close.textContent="✕"; close.className="absolute right-2 top-2 px-2 py-1 bg-gray-200 rounded";
-  close.onclick=zavriOverlay; card.appendChild(close);
+  const backdrop = document.createElement("div");
+  backdrop.id = OVERLAY_ID;
+  backdrop.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;";
+  backdrop.onclick = (e) => { if (e.target === backdrop) zavriOverlay(); };
 
-  const title=document.createElement("h3");
-  title.className="text-lg font-bold mb-2";
-  title.textContent=overlay.mode==="g" ? "Vstřelený gól – vyber střelce, asistence (0–2) a +"
-                                       : "Obdržený gól – vyber brankáře a −";
+  const card = document.createElement("div");
+  card.className = "bg-white text-black rounded p-4 max-w-4xl w-[95%] relative";
+
+  const close = document.createElement("button");
+  close.textContent = "✕";
+  close.className = "absolute right-2 top-2 px-2 py-1 bg-gray-200 rounded";
+  close.onclick = () => zavriOverlay();
+  card.appendChild(close);
+
+  const title = document.createElement("h3");
+  title.className = "text-lg font-bold mb-2";
+  title.textContent = overlay.mode === "g"
+    ? "Vstřelený gól – vyber střelce, asistence (0–2) a +"
+    : "Obdržený gól – vyber brankáře a −";
   card.appendChild(title);
 
-  const info=document.createElement("div");
-  info.className="mb-3 text-sm";
-  info.textContent=`Čas: ${overlay.cas} • Třetina: ${aktivniTretina}`;
+  const info = document.createElement("div");
+  info.className = "mb-3 text-sm";
+  info.textContent = `Čas: ${overlay.cas} • Třetina: ${aktivniTretina}`;
   card.appendChild(info);
 
-  const grid=document.createElement("div");
-  grid.className="grid grid-cols-6 gap-2";
+  // Přepínače režimu
+  const modes = document.createElement("div");
+  modes.className = "flex gap-2 mb-3";
+  const makeChip = (key, label) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    const active = overlay.selectMode === key;
+    b.className = (active ? "bg-black text-white" : "bg-gray-200") + " px-3 py-1 rounded";
+    b.onclick = () => { overlay.selectMode = key; removeOverlayDom(); render(); };
+    return b;
+  };
+  if (overlay.mode === "g") {
+    modes.appendChild(makeChip("shooter", "Střelec"));
+    modes.appendChild(makeChip("assist", "Asistence (0–2)"));
+    modes.appendChild(makeChip("plus", "+ na ledě"));
+  } else {
+    modes.appendChild(makeChip("goalie", "Brankář"));
+    modes.appendChild(makeChip("minus", "− na ledě"));
+  }
+  card.appendChild(modes);
 
-  sortHraci(hraci).forEach(h=>{
-    const b=document.createElement("button");
-    b.textContent=cisloZJmena(h.jmeno);
-    b.className = `px-2 py-2 rounded font-bold text-white ${h.typ==="B"?"bg-black":barvaPetky(h.petka)}`;
+  // Grid hráčů
+  const grid = document.createElement("div");
+  grid.className = "grid grid-cols-6 gap-2";
 
-    if(overlay.mode==="g"){
-      const isShooter = overlay.shooter===h.id;
-      const isA = overlay.A?.has(h.id);
-      const isP = overlay.plus?.has(h.id);
-      if(isShooter) b.classList.add("ring-4","ring-yellow-300");
-      else if(isA) b.classList.add("ring-4","ring-indigo-300");
-      else if(isP) b.classList.add("opacity-80");
+  sortHraci(hraci).forEach(h => {
+    const btn = document.createElement("button");
+    btn.textContent = cisloZJmena(h.jmeno);
+    btn.className = `px-2 py-2 rounded font-bold text-white ${h.typ === "B" ? "bg-black" : barvaPetky(h.petka)}`;
 
-      b.onclick=()=>{
-        // cyklus kliků: (není nic) => (střelec) => (A) => (+) => (nic)
-        if(isShooter){
-          overlay.shooter=null;
-        }else if(!overlay.shooter){
-          overlay.shooter=h.id;
-        }else if(!isA){
-          // nepovolit asistenci pro střelce
-          if(h.id!==overlay.shooter){
-            if(overlay.A.size<2) overlay.A.add(h.id);
-            else overlay.plus.add(h.id);
-          }
-        }else if(isA){
-          overlay.A.delete(h.id);
-          overlay.plus.add(h.id);
-        }
-        render();
-      };
-
-    }else{ // obdržený
-      const isG = overlay.goalie===h.id;
-      const isM = overlay.minus?.has(h.id);
-      if(isG) b.classList.add("ring-4","ring-yellow-300");
-      else if(isM) b.classList.add("ring-4","ring-red-300");
-
-      b.onclick=()=>{
-        if(h.typ==="B"){
-          overlay.goalie = isG ? null : h.id;
-        }else{
-          if(isM) overlay.minus.delete(h.id); else overlay.minus.add(h.id);
-        }
-        render();
-      };
+    // zvýraznění podle role
+    if (overlay.mode === "g") {
+      if (overlay.shooter === h.id) btn.classList.add("ring-4", "ring-yellow-300");
+      if (overlay.A?.has(h.id)) btn.classList.add("ring-4", "ring-indigo-300");
+      if (overlay.plus?.has(h.id)) btn.classList.add("opacity-80");
+    } else {
+      if (overlay.goalie === h.id) btn.classList.add("ring-4", "ring-yellow-300");
+      if (overlay.minus?.has(h.id)) btn.classList.add("ring-4", "ring-red-300");
     }
 
-    grid.appendChild(b);
+    btn.onclick = () => {
+      if (overlay.mode === "g") {
+        if (overlay.selectMode === "shooter") {
+          overlay.shooter = (overlay.shooter === h.id) ? null : h.id;
+        } else if (overlay.selectMode === "assist") {
+          if (h.id === overlay.shooter) return; // střelec nemůže být asistent
+          if (overlay.A.has(h.id)) overlay.A.delete(h.id);
+          else if (overlay.A.size < 2) overlay.A.add(h.id); // max 2
+        } else {
+          // plus
+          if (overlay.plus.has(h.id)) overlay.plus.delete(h.id);
+          else overlay.plus.add(h.id);
+        }
+      } else {
+        if (overlay.selectMode === "goalie") {
+          if (h.typ !== "B") return;
+          overlay.goalie = (overlay.goalie === h.id) ? null : h.id;
+        } else {
+          // minus
+          if (overlay.minus.has(h.id)) overlay.minus.delete(h.id);
+          else overlay.minus.add(h.id);
+        }
+      }
+      removeOverlayDom();
+      render();
+    };
+
+    grid.appendChild(btn);
   });
 
-  const row=document.createElement("div");
-  row.className="flex justify-end gap-2 mt-3";
-  const save=document.createElement("button");
-  save.textContent="Uložit";
-  save.className="px-3 py-1 rounded bg-green-600 text-white";
-  save.onclick=ulozOverlay;
-  const cancel=document.createElement("button");
-  cancel.textContent="Zavřít";
-  cancel.className="px-3 py-1 rounded bg-gray-300";
-  cancel.onclick=zavriOverlay;
+  // Ovládací řádek
+  const row = document.createElement("div");
+  row.className = "flex justify-end gap-2 mt-3";
+  const save = document.createElement("button");
+  save.textContent = "Uložit";
+  save.className = "px-3 py-1 rounded bg-green-600 text-white";
+  save.onclick = () => ulozOverlay();
+  const cancel = document.createElement("button");
+  cancel.textContent = "Zavřít";
+  cancel.className = "px-3 py-1 rounded bg-gray-300";
+  cancel.onclick = () => zavriOverlay();
+
+  row.appendChild(save);
+  row.appendChild(cancel);
 
   card.appendChild(grid);
   card.appendChild(row);
-  row.appendChild(save); row.appendChild(cancel);
   backdrop.appendChild(card);
   document.body.appendChild(backdrop);
 }
 
-// ---- Import/Export ----
+// ================= Import/Export =================
 async function importSoupiska(file){
   const data=await file.arrayBuffer();
   const wb=XLSX.read(data);
@@ -548,7 +592,29 @@ function exportStatistiky(){
   XLSX.writeFile(wb,"statistiky_zapasu.xlsx");
 }
 
-// ---- Render ----
+// ================= Autosave (localStorage) =================
+function saveState() {
+  const state = { hraci, statistiky, goloveUdalosti, infoZapasu, aktivniTretina, aktivniPetka, zamknuto, penaltyMode };
+  try { localStorage.setItem("hokej-stat-state", JSON.stringify(state)); } catch {}
+}
+function loadState() {
+  try {
+    const raw = localStorage.getItem("hokej-stat-state");
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    hraci = s.hraci || [];
+    statistiky = s.statistiky || {};
+    goloveUdalosti = s.goloveUdalosti || [];
+    infoZapasu = s.infoZapasu || infoZapasu;
+    aktivniTretina = s.aktivniTretina || "1";
+    aktivniPetka = s.aktivniPetka || 0;
+    zamknuto = !!s.zamknuto;
+    penaltyMode = !!s.penaltyMode;
+    return true;
+  } catch { return false; }
+}
+
+// ================= Render =================
 function render(){
   root.innerHTML="";
   renderHlavicka();
@@ -558,19 +624,22 @@ function render(){
   renderUdalosti();
   renderStatistiky();
   if(overlay) renderOverlay();
+  saveState(); // autosave po každém renderu
 }
 
-// ---- Demo hráči (můžeš vyhodit) ----
-if(hraci.length===0){
-  hraci=[
-    {id:"1", jmeno:"1 Brankář", typ:"B", petka:0},
-    {id:"2", jmeno:"12 Novák", typ:"Ú", petka:1},
-    {id:"3", jmeno:"22 Dvořák", typ:"Ú", petka:1},
-    {id:"4", jmeno:"33 Svoboda", typ:"O", petka:1},
-    {id:"5", jmeno:"44 Novotný", typ:"O", petka:1},
-    {id:"6", jmeno:"55 Malý", typ:"Ú", petka:2},
-  ];
-  resetStatistik();
+// ================= Start =================
+if (!loadState()) {
+  // demo hráči (můžeš vyhodit)
+  if(hraci.length===0){
+    hraci=[
+      {id:"1", jmeno:"1 Brankář", typ:"B", petka:0},
+      {id:"2", jmeno:"12 Novák", typ:"Ú", petka:1},
+      {id:"3", jmeno:"22 Dvořák", typ:"Ú", petka:1},
+      {id:"4", jmeno:"33 Svoboda", typ:"O", petka:1},
+      {id:"5", jmeno:"44 Novotný", typ:"O", petka:1},
+      {id:"6", jmeno:"55 Malý", typ:"Ú", petka:2},
+    ];
+    resetStatistik();
+  }
 }
-
 render();
