@@ -6,13 +6,14 @@
   <title>Hokejové Statistiky</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
-    /* tiskový režim */
+    /* tisk */
     @media print {
       body { color: #000; background: #fff; }
       .no-print { display:none !important; }
       .print-only { display:block !important; }
     }
     .print-only { display:none; }
+
     /* overlay */
     .overlay-backdrop {
       position: fixed; inset: 0; background: rgba(0,0,0,.6);
@@ -23,7 +24,7 @@
 <body class="bg-gray-900 text-white">
   <div id="root" class="max-w-6xl mx-auto p-4"></div>
 
-  <!-- knihovna pro import/export Excelu -->
+  <!-- SheetJS pro import/export XLSX -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   <script src="app.js"></script>
 </body>
