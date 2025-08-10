@@ -124,8 +124,10 @@ function souhrnSkore(){
   const per = Object.entries(map).map(([_,[d,h]])=>`${d}:${h}`).join(";");
   return `${dom}:${hos} (${per})`;
 }
+
 // naše střely = součet střel všech ne–B hráčů;
-// soupeřovy střely = zásahy našich gólmanů + obdržené góly (u našich gólmanů)
+// soupeřovy střely = zásahy našich gólmanů + obdržené góly (u našich gólmanů);
+// výstup řadíme jako skóre: DOMÁCÍ : HOSTÉ
 function souhrnStrely(){
   const nasi={"1":0,"2":0,"3":0,"P":0};
   const soup={"1":0,"2":0,"3":0,"P":0};
@@ -143,8 +145,21 @@ function souhrnStrely(){
   }
   const nasiSum = Object.values(nasi).reduce((a,b)=>a+b,0);
   const soupSum = Object.values(soup).reduce((a,b)=>a+b,0);
-  const per = ["1","2","3","P"].map(t=>`${nasi[t]}:${soup[t]}`).join(";");
-  return `${nasiSum}:${soupSum} (${per})`;
+
+  const jeDomaci = infoZapasu.tym==="domaci";
+  const domPer = ["1","2","3","P"].map(t=> jeDomaci ? nasi[t] : soup[t]).join(":"); // jen pro interní kontrolu
+  const hostPer = ["1","2","3","P"].map(t=> jeDomaci ? soup[t] : nasi[t]).join(":"); // nepoužíváme, ale nechávám pro debug
+
+  const per = ["1","2","3","P"].map(t=>{
+    const d = jeDomaci ? nasi[t] : soup[t];
+    const h = jeDomaci ? soup[t] : nasi[t];
+    return `${d}:${h}`;
+  }).join(";");
+
+  const dom = jeDomaci ? nasiSum : soupSum;
+  const hos = jeDomaci ? soupSum : nasiSum;
+
+  return `${dom}:${hos} (${per})`;
 }
 
 // ================= Overlay – otevření =================
@@ -178,20 +193,23 @@ function ulozOverlay(){
 
   if(overlay.mode==="g"){
     if(!overlay.shooter){ alert("Vyber střelce."); return; }
+    // Střelec: gól + automatické +
     const sShooter = statistiky[overlay.shooter];
     sShooter.goly[t].push(overlay.cas);
-    sShooter.plus[t]++; // střelec má +
+    sShooter.plus[t]++;
 
-    const asistArr = Array.from(overlay.A).slice(0,2); // 0–2 asistenti
+    // Asistence (0–2): asistence + automatické +
+    const asistArr = Array.from(overlay.A).slice(0,2);
     for(const id of asistArr){
       statistiky[id].asistence[t]++;
       statistiky[id].plus[t]++;
     }
 
+    // + na ledě: jen těm, kteří ještě nedostali (střelec a asistenti už mají)
     const plusArr = Array.from(overlay.plus);
     for(const id of plusArr){
-      if(id===overlay.shooter) continue;           // střelec už + má
-      if(!asistArr.includes(id)) statistiky[id].plus[t]++; // asistent už + má
+      if(id===overlay.shooter) continue;
+      if(!asistArr.includes(id)) statistiky[id].plus[t]++;
     }
 
     goloveUdalosti.push({
@@ -204,6 +222,7 @@ function ulozOverlay(){
     });
 
   }else{
+    // Obdržený gól: zapisujeme jen do "obdrzene" (žádná střela ani zásah)
     if(!overlay.goalie){ alert("Vyber brankáře."); return; }
     const sGoalie = statistiky[overlay.goalie];
     sGoalie.obdrzene[t].push(overlay.cas);
@@ -293,7 +312,7 @@ function renderHlavicka(){
     localStorage.removeItem(STORAGE_KEY);
     goloveUdalosti=[];
     resetStatistik();
-    zamknuto=false; penaltyMode=false;
+    zamknuto=false; penaltyMode=false; aktivniPetka=0;
     saveState();
     render();
   };
@@ -462,6 +481,7 @@ function renderStatistiky(){
 
     ["1","2","3","P"].forEach(t=>{
       if(h.typ==="B"){
+        // Brankář: sloupce = obdržené góly; zásahy do posledního sloupce
         const ob = (s.obdrzene[t]||[]).length;
         const za = (s.zasahy[t]||0);
         sumObdr[t]+=ob; sumZasahy[t]+=za;
@@ -469,6 +489,7 @@ function renderStatistiky(){
         perZ.push(za);
         row += `<td class="text-center">${ob}</td>`;
       }else{
+        // Hráč: sloupce = střely
         const st = (s.strely[t]||0);
         sumStrely[t]+=st;
         total += st;
@@ -483,7 +504,7 @@ function renderStatistiky(){
     tbody.appendChild(tr);
   });
 
-  // Řádek součtů (střely hráčů + obdržené góly gólmanů); zásahy samostatně
+  // Součtový řádek (střely hráčů + obdržené góly gólmanů); zásahy zvlášť
   const trSum=document.createElement("tr"); trSum.className="font-bold";
   let r=`<td>–</td><td>Celkem</td><td>–</td><td>–</td>`;
   ["1","2","3","P"].forEach(t=>{
@@ -629,7 +650,7 @@ async function importSoupiska(file){
     if(!cislo||!jmeno||!typ) continue;
     hraci.push({id:String(i), jmeno:`${cislo} ${jmeno}`, typ:String(typ).trim(), petka:Number(petka)||0});
   }
-  resetStatistik(); zamknuto=false; penaltyMode=false;
+  resetStatistik(); zamknuto=false; penaltyMode=false; aktivniPetka=0;
   saveState();
   render();
 }
@@ -660,7 +681,7 @@ function render(){
   root.innerHTML="";
   renderHlavicka();
   renderTretiny();
-  renderDlazdicePatek();   // ⬅ nové: dlaždice pětek nad akcemi
+  renderDlazdicePatek();   // ⬅ dlaždice pětek nad akcemi (jen pětky s hráči)
   renderAkce3();
   renderHraci();
   renderUdalosti();
