@@ -1,4 +1,10 @@
-// HOKEJOVÁ STATISTIKA – finální verze (autosave + pětky dlaždice + overlay + rychlé akce)
+// HOKEJOVÁ STATISTIKA – finální single-file verze
+// - Overlay: vstřelený/obdržený gól (0–2 asistence, +/−)
+// - Klik na hráče = střela, klik na brankáře = zásah
+// - Rychlý přehled skóre a střel (řazení podle domácí/hosté)
+// - Statistiky po třetinách: hráči=střely, gólmani=obdržené góly, zásahy zvláštní sloupec
+// - Dlaždice pětek (jen ty s hráči) nad akcemi
+// - Import .xlsx nahoře, Export .xlsx, autosave, uzamčení zápasu
 
 const root = document.getElementById("root");
 
@@ -126,7 +132,7 @@ function souhrnSkore(){
 }
 
 // naše střely = součet střel všech ne–B hráčů;
-// soupeřovy střely = zásahy našich gólmanů + obdržené góly (u našich gólmanů);
+// soupeřovy střely = zásahy našich gólmanů + jejich obdržené góly;
 // výstup řadíme jako skóre: DOMÁCÍ : HOSTÉ
 function souhrnStrely(){
   const nasi={"1":0,"2":0,"3":0,"P":0};
@@ -143,22 +149,15 @@ function souhrnStrely(){
       }
     }
   }
-  const nasiSum = Object.values(nasi).reduce((a,b)=>a+b,0);
-  const soupSum = Object.values(soup).reduce((a,b)=>a+b,0);
-
+  const sum=o=>Object.values(o).reduce((a,b)=>a+b,0);
   const jeDomaci = infoZapasu.tym==="domaci";
-  const domPer = ["1","2","3","P"].map(t=> jeDomaci ? nasi[t] : soup[t]).join(":"); // jen pro interní kontrolu
-  const hostPer = ["1","2","3","P"].map(t=> jeDomaci ? soup[t] : nasi[t]).join(":"); // nepoužíváme, ale nechávám pro debug
-
+  const dom = jeDomaci ? sum(nasi) : sum(soup);
+  const hos = jeDomaci ? sum(soup) : sum(nasi);
   const per = ["1","2","3","P"].map(t=>{
     const d = jeDomaci ? nasi[t] : soup[t];
     const h = jeDomaci ? soup[t] : nasi[t];
     return `${d}:${h}`;
   }).join(";");
-
-  const dom = jeDomaci ? nasiSum : soupSum;
-  const hos = jeDomaci ? soupSum : nasiSum;
-
   return `${dom}:${hos} (${per})`;
 }
 
@@ -199,14 +198,14 @@ function ulozOverlay(){
     sShooter.plus[t]++;
 
     // Asistence (0–2): asistence + automatické +
-    const asistArr = Array.from(overlay.A).slice(0,2);
+    const asistArr = Array.from(overlay.A || []).slice(0,2);
     for(const id of asistArr){
       statistiky[id].asistence[t]++;
       statistiky[id].plus[t]++;
     }
 
     // + na ledě: jen těm, kteří ještě nedostali (střelec a asistenti už mají)
-    const plusArr = Array.from(overlay.plus);
+    const plusArr = Array.from(overlay.plus || []);
     for(const id of plusArr){
       if(id===overlay.shooter) continue;
       if(!asistArr.includes(id)) statistiky[id].plus[t]++;
@@ -227,7 +226,7 @@ function ulozOverlay(){
     const sGoalie = statistiky[overlay.goalie];
     sGoalie.obdrzene[t].push(overlay.cas);
 
-    const minusArr = Array.from(overlay.minus);
+    const minusArr = Array.from(overlay.minus || []);
     for(const id of minusArr) statistiky[id].minus[t]++;
 
     goloveUdalosti.push({
@@ -467,7 +466,7 @@ function renderStatistiky(){
   const tbody=table.querySelector("tbody");
 
   const sumStrely={"1":0,"2":0,"3":0,"P":0};
-  const sumObdr={"1":0,"2":0,"3":0,"P":0};
+  const sumObdr ={"1":0,"2":0,"3":0,"P":0};
   const sumZasahy={"1":0,"2":0,"3":0,"P":0};
 
   sortHraci(hraci).forEach(h=>{
@@ -504,7 +503,7 @@ function renderStatistiky(){
     tbody.appendChild(tr);
   });
 
-  // Součtový řádek (střely hráčů + obdržené góly gólmanů); zásahy zvlášť
+  // Řádek Celkem: střely hráčů + obdržené góly gólmanů; zásahy zvlášť
   const trSum=document.createElement("tr"); trSum.className="font-bold";
   let r=`<td>–</td><td>Celkem</td><td>–</td><td>–</td>`;
   ["1","2","3","P"].forEach(t=>{
