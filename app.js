@@ -1,15 +1,4 @@
-// HOKEJOVÁ STATISTIKA – finální single-file verze
-// Funkce:
-// - Klik na hráče = střela; klik na brankáře = zásah
-// - Overlay: vstřelený gól (0–2 asistence, +) / obdržený gól (brankář, −)
-// - Asistenti dostanou automaticky „+“; u zobrazení gólu se v „+“ ukážou střelec i asistenti
-// - Obdržený gól se nepřičítá jako střela ani zásah gólmanovi
-// - Rychlý přehled skóre a střel (po třetinách; pořadí dle domácí/hosté)
-// - Statistiky po třetinách: hráči = střely; gólmani = obdržené góly; zásahy gólmanů ve zvláštním sloupci
-// - Dlaždice pětek (jen pětky, kde je alespoň jeden hráč), filtr „Vše“ + 1..5
-// - Import (.xlsx) v hlavičce, export (.xlsx), autosave (localStorage), možnost uzamknout zápas
-// - Undo/Zpět (posledních 5 kroků)
-// - Správa soupisky: ruční přidání hráče, „měkké“ mazání (deaktivace), obnova
+// HOKEJOVÁ STATISTIKA – verze s kompaktním „Nastavení“ a velkým tlačítkem Ukončit zápas dole
 
 const root = document.getElementById("root");
 
@@ -20,7 +9,7 @@ function getSnapshot(){
   return JSON.stringify({
     hraci, statistiky, goloveUdalosti,
     infoZapasu, aktivniTretina, aktivniPetka,
-    zamknuto, penaltyMode, showRosterAdmin
+    zamknuto, penaltyMode, showRosterAdmin, showSettings
   });
 }
 function applySnapshot(json){
@@ -34,6 +23,7 @@ function applySnapshot(json){
   zamknuto = !!s.zamknuto;
   penaltyMode = !!s.penaltyMode;
   showRosterAdmin = !!s.showRosterAdmin;
+  showSettings = !!s.showSettings;
 }
 function checkpoint(){
   try{
@@ -58,7 +48,8 @@ let infoZapasu = { datum:"", cas:"", misto:"", tym:"domaci" }; // "domaci" | "ho
 let aktivniPetka = 0;                // 0=vše, jinak 1..5
 let zamknuto = false;                // Ukončený zápas → nelze editovat
 let penaltyMode = false;             // ⛔ Trest – kliky zapisují tresty
-let showRosterAdmin = false;         // Správa soupisky panel
+let showRosterAdmin = false;         // Správa soupisky panel (uvnitř Nastavení)
+let showSettings = false;            // Rozbalovací panel „Nastavení“
 
 // ---- Overlay stav ----
 let overlay = null;                   // {mode:"g"|"o", cas, shooter?, A:Set, plus:Set, goalie?, minus:Set, selectMode:"..." }
@@ -70,7 +61,7 @@ function saveState() {
   const state = {
     hraci, statistiky, goloveUdalosti,
     infoZapasu, aktivniTretina, aktivniPetka,
-    zamknuto, penaltyMode, showRosterAdmin, ts: Date.now()
+    zamknuto, penaltyMode, showRosterAdmin, showSettings, ts: Date.now()
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
 }
@@ -91,6 +82,7 @@ function applyState(s) {
   zamknuto = !!s.zamknuto;
   penaltyMode = !!s.penaltyMode;
   showRosterAdmin = !!s.showRosterAdmin;
+  showSettings = !!s.showSettings;
 }
 
 // ================= Pomůcky =================
@@ -323,17 +315,7 @@ function renderHlavicka(){
   dWrap.appendChild(dLbl); dWrap.appendChild(dSel);
   line.appendChild(dWrap);
 
-  // Import soupisky nahoře
-  const imp=document.createElement("div"); imp.className="flex flex-col";
-  const iLbl=document.createElement("label"); iLbl.className="text-xs text-gray-400"; iLbl.textContent="Import soupisky (.xlsx)";
-  const file=document.createElement("input");
-  file.type="file"; file.accept=".xlsx";
-  file.className="px-2 py-1 rounded bg-gray-800 border border-gray-700";
-  file.onchange=(e)=>{ if(e.target.files?.length){ importSoupiska(e.target.files[0]); } };
-  imp.appendChild(iLbl); imp.appendChild(file);
-  line.appendChild(imp);
-
-  // Ovládání
+  // Ovládání (kompaktní): Zpět, Nastavení (⚙️), Nový zápas
   const actions=document.createElement("div"); actions.className="flex gap-2 ml-auto items-end";
 
   // Zpět (Undo)
@@ -344,27 +326,13 @@ function renderHlavicka(){
   bUndo.onclick = () => undoLast();
   actions.appendChild(bUndo);
 
-  // Správa soupisky
-  const bRoster = document.createElement("button");
-  bRoster.textContent = showRosterAdmin ? "✓ Správa soupisky" : "⚙️ Správa soupisky";
-  bRoster.className = (showRosterAdmin?"bg-blue-700":"bg-gray-700")+" px-3 py-1 rounded";
-  bRoster.onclick = ()=>{ showRosterAdmin = !showRosterAdmin; render(); };
-  actions.appendChild(bRoster);
-
-  const bEnd=document.createElement("button");
-  bEnd.textContent = zamknuto ? "Zápas uzamčen" : "Ukončit zápas";
-  bEnd.disabled = zamknuto;
-  bEnd.className = (zamknuto?"bg-gray-700":"bg-red-700 hover:bg-red-800")+" px-3 py-1 rounded";
-  bEnd.onclick=()=>{ if(confirm("Ukončit zápas?")){ checkpoint(); zamknuto=true; saveState(); render(); } };
-  actions.appendChild(bEnd);
-
-  const bPrint=document.createElement("button");
-  bPrint.textContent="🖨️ Tisk"; bPrint.className="px-3 py-1 rounded bg-gray-700"; bPrint.onclick=()=>window.print();
-  actions.appendChild(bPrint);
-
-  const bExp=document.createElement("button");
-  bExp.textContent="📤 Export XLSX"; bExp.className="px-3 py-1 rounded bg-green-700"; bExp.onclick=exportStatistiky;
-  actions.appendChild(bExp);
+  // ⚙️ Nastavení – rozbalí panel s importem, exportem, tiskem a správou soupisky
+  const bSettings = document.createElement("button");
+  bSettings.innerHTML = "⚙️";
+  bSettings.title = "Nastavení";
+  bSettings.className = (showSettings?"bg-blue-700":"bg-gray-700")+" px-3 py-1 rounded";
+  bSettings.onclick = ()=>{ showSettings = !showSettings; saveState(); render(); };
+  actions.appendChild(bSettings);
 
   const bNew=document.createElement("button");
   bNew.textContent="🆕 Nový zápas";
@@ -395,13 +363,64 @@ function renderHlavicka(){
   wrap.appendChild(shots);
   root.appendChild(wrap);
 
-  if(showRosterAdmin) renderRosterAdmin();
+  if(showSettings) renderSettingsPanel();
 }
 
-// ================= Panel: Správa soupisky =================
-function renderRosterAdmin(){
+// ================= Panel: Nastavení (správa soupisky, import, tisk, export) =================
+function renderSettingsPanel(){
   const box = document.createElement("div");
   box.className = "p-3 bg-gray-800 rounded mb-3 border border-gray-700";
+
+  // Titulek a přepínač Správy soupisky
+  const header = document.createElement("div");
+  header.className = "flex items-center justify-between mb-3";
+  const ttl = document.createElement("div");
+  ttl.className = "font-bold";
+  ttl.textContent = "Nastavení";
+  header.appendChild(ttl);
+
+  const right = document.createElement("div");
+  right.className = "flex gap-2";
+
+  // Import
+  const fileLabel = document.createElement("label");
+  fileLabel.className = "px-3 py-1 rounded bg-gray-700 cursor-pointer";
+  fileLabel.textContent = "📥 Import .xlsx";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file"; fileInput.accept = ".xlsx"; fileInput.className="hidden";
+  fileInput.onchange = (e)=>{ if(e.target.files?.length){ importSoupiska(e.target.files[0]); } };
+  fileLabel.appendChild(fileInput);
+  right.appendChild(fileLabel);
+
+  // Tisk
+  const bPrint=document.createElement("button");
+  bPrint.textContent="🖨️ Tisk"; bPrint.className="px-3 py-1 rounded bg-gray-700"; bPrint.onclick=()=>window.print();
+  right.appendChild(bPrint);
+
+  // Export
+  const bExp=document.createElement("button");
+  bExp.textContent="📤 Export XLSX"; bExp.className="px-3 py-1 rounded bg-green-700"; bExp.onclick=exportStatistiky;
+  right.appendChild(bExp);
+
+  header.appendChild(right);
+  box.appendChild(header);
+
+  // Přepínač správy soupisky
+  const toggle = document.createElement("button");
+  toggle.textContent = showRosterAdmin ? "✓ Správa soupisky" : "⚙️ Správa soupisky";
+  toggle.className = (showRosterAdmin?"bg-blue-700":"bg-gray-700")+" px-3 py-1 rounded mb-3";
+  toggle.onclick = ()=>{ showRosterAdmin = !showRosterAdmin; saveState(); render(); };
+  box.appendChild(toggle);
+
+  if(showRosterAdmin) renderRosterAdmin(box);
+
+  root.appendChild(box);
+}
+
+// ================= Panel: Správa soupisky (vkládá se do Nastavení) =================
+function renderRosterAdmin(container){
+  const box = document.createElement("div");
+  box.className = "p-3 bg-gray-900 rounded border border-gray-700";
 
   const title = document.createElement("div");
   title.className = "font-bold mb-2";
@@ -415,7 +434,7 @@ function renderRosterAdmin(){
   const mk = (label, type="text", attrs={})=>{
     const w=document.createElement("div"); w.className="flex flex-col";
     const l=document.createElement("label"); l.className="text-xs text-gray-300"; l.textContent=label;
-    const i=document.createElement("input"); i.type=type; i.className="px-2 py-1 rounded bg-gray-900 border border-gray-700";
+    const i=document.createElement("input"); i.type=type; i.className="px-2 py-1 rounded bg-gray-800 border border-gray-700";
     Object.assign(i, attrs);
     w.appendChild(l); w.appendChild(i);
     return [w,i];
@@ -426,7 +445,7 @@ function renderRosterAdmin(){
   const selWrap = document.createElement("div"); selWrap.className="flex flex-col";
   const selLbl = document.createElement("label"); selLbl.className="text-xs text-gray-300"; selLbl.textContent="Typ (B/O/Ú)";
   const sel = document.createElement("select");
-  sel.className="px-2 py-1 rounded bg-gray-900 border border-gray-700";
+  sel.className="px-2 py-1 rounded bg-gray-800 border border-gray-700";
   ["B","O","Ú"].forEach(v=>{ const o=document.createElement("option"); o.value=v; o.textContent=v; sel.appendChild(o);});
   selWrap.appendChild(selLbl); selWrap.appendChild(sel);
 
@@ -450,7 +469,7 @@ function renderRosterAdmin(){
   const actWrap=document.createElement("div"); actWrap.className="flex flex-wrap gap-2";
   sortHraci(hraci).filter(h=>h.active!==false).forEach(h=>{
     const chip=document.createElement("div");
-    chip.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-900 border border-gray-700";
+    chip.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-800 border border-gray-700";
     chip.innerHTML = `<span>#${cisloZJmena(h.jmeno)} ${h.jmeno.split(" ").slice(1).join(" ")} (${h.typ}${h.petka?`, ${h.petka}.`:``})</span>`;
     const del=document.createElement("button");
     del.textContent="×";
@@ -471,7 +490,7 @@ function renderRosterAdmin(){
     const deadWrap=document.createElement("div"); deadWrap.className="flex flex-wrap gap-2";
     sortHraci(inactive).forEach(h=>{
       const chip=document.createElement("div");
-      chip.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-900 border border-gray-700";
+      chip.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-800 border border-gray-700";
       chip.innerHTML = `<span>#${cisloZJmena(h.jmeno)} ${h.jmeno.split(" ").slice(1).join(" ")} (${h.typ}${h.petka?`, ${h.petka}.`:``})</span>`;
       const restore=document.createElement("button");
       restore.textContent="↺";
@@ -484,7 +503,7 @@ function renderRosterAdmin(){
     box.appendChild(deadBox);
   }
 
-  root.appendChild(box);
+  container.appendChild(box);
 }
 
 // ====== Roster API (přidání/„smazání“/obnova) ======
@@ -704,6 +723,17 @@ function renderStatistiky(){
 
   box.appendChild(table);
   root.appendChild(box);
+
+  // === Velké tlačítko „Ukončit zápas“ (dole pod statistikami) ===
+  const endWrap = document.createElement("div");
+  endWrap.className = "mt-4 flex justify-center";
+  const bEnd=document.createElement("button");
+  bEnd.textContent = zamknuto ? "Zápas uzamčen" : "Ukončit zápas";
+  bEnd.disabled = zamknuto;
+  bEnd.className = (zamknuto?"bg-gray-700":"bg-red-700 hover:bg-red-800")+" text-white px-6 py-3 rounded text-lg font-bold";
+  bEnd.onclick=()=>{ if(confirm("Ukončit zápas?")){ checkpoint(); zamknuto=true; saveState(); render(); } };
+  endWrap.appendChild(bEnd);
+  root.appendChild(endWrap);
 }
 
 // ================= Overlay UI (s režimy výběru) =================
