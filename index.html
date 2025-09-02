@@ -1,44 +1,33 @@
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#111827" />
-  <title>Hokejové Statistiky</title>
+<!doctype html>
+<html lang="cs" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zápis statistik hokeje</title>
 
-  <!-- Tailwind (CDN) -->
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <!-- Tailwind přes CDN (bez build kroku) -->
+    <script src="https://cdn.tailwindcss.com"></script>
 
-  <!-- Základní styly + tisk -->
-  <style>
-    html, body { background-color: #111827; color: #fff; }
-    /* Fix pro mobilní 100vh */
-    .min-h-screen-safe { min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
-    /* Hezčí tisk – bílé pozadí, tmavý text, schovat tlačítka a dlaždice */
-    @media print {
-      html, body { background: #fff !important; color: #000 !important; }
-      #app-wrap { box-shadow: none !important; }
-      .no-print, button, .grid { display: none !important; }
-      .print-block { display: block !important; }
-    }
-  </style>
-</head>
-<body class="min-h-screen-safe">
+    <!-- SheetJS pro import/export .xlsx (globální XLSX) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-  <!-- Kontejner aplikace -->
-  <div id="root" class="max-w-6xl mx-auto p-4"></div>
-
-  <!-- Lehký preloader pro případ zpoždění skriptů -->
-  <noscript>
-    <div class="max-w-6xl mx-auto p-4">
-      <p>Pro spuštění aplikace je potřeba povolit JavaScript.</p>
+    <!-- Trochu tmavého vzhledu pro celé tělo -->
+    <style>
+      :root { color-scheme: dark; }
+      body { background: #0f172a; color: #e5e7eb; }
+      @media print {
+        body { background: white; color: black; }
+      }
+    </style>
+  </head>
+  <body class="h-full">
+    <div class="max-w-7xl mx-auto p-4">
+      <h1 class="text-2xl font-bold mb-3">Zápis statistik hokeje</h1>
+      <!-- Root aplikace -->
+      <div id="root" class="space-y-4"></div>
     </div>
-  </noscript>
 
-  <!-- SheetJS (XLSX) pro import/export -->
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-
-  <!-- Hlavní skript aplikace -->
-  <script src="app.js"></script>
-</body>
+    <!-- Tvoje aplikace -->
+    <script defer src="./app.js"></script>
+  </body>
 </html>
