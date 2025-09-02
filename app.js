@@ -1,3 +1,31 @@
+// --- DIAGNOSTIKA (vložit úplně nahoru app.js) ---
+(function bootstrapDiag(){
+  window.addEventListener('error', function (e) {
+    try {
+      const msg = (e && e.message) ? e.message : String(e);
+      const root = document.getElementById('root') || (function () {
+        const d = document.createElement('div'); d.id = 'root'; document.body.appendChild(d); return d;
+      })();
+      const box = document.createElement('div');
+      box.style.cssText = 'background:#7f1d1d;color:#fff;padding:12px;border-radius:8px;margin:12px 0;font-family:system-ui,Arial';
+      box.innerHTML = '<strong>Chyba v app.js:</strong> ' + msg + '<br><small>Podrobnosti jsou v konzoli (F12 → Console).</small>';
+      root.prepend(box);
+      console.error('[APP ERROR]', e.error || e);
+    } catch (_) {}
+  });
+
+  // základní sanity check
+  const root = document.getElementById('root');
+  if (!root) {
+    const div = document.createElement('div');
+    div.innerHTML = '<div style="background:#7f1d1d;color:#fff;padding:12px;border-radius:8px">Chybí &lt;div id="root"&gt; v index.html</div>';
+    document.body.appendChild(div);
+  }
+  if (!window.XLSX) {
+    console.warn('XLSX není dostupné. Zkontroluj <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"> v <head>.');
+  }
+})();
+
 // HOKEJOVÁ STATISTIKA – verze s nájezdy (SO) + odstraněné tlačítko „Trest“ + export soupisky
 // - Klik hráč = střela, klik gólman = zásah, dlouhý stisk (≥450 ms) = trest
 // - Gólové overlaye (vstřelený/obdržený), auto+ pro střelce i asistenty
