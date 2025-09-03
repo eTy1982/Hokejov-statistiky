@@ -1,18 +1,19 @@
-/* HOKEJ – Zápis statistik (final)
-   - krátký klik na hráče = střela, na gólmana = zásah
-   - dlouhý stisk (≥450ms) = trest (bez samostatného tlačítka)
-   - overlay pro vstřelený/obdržený gól (0–2 asistence, automatické + pro střelce i asistenty)
-   - statistiky po třetinách (střely u hráčů / obdržené u gólmanů), zásahy gólmanů (1/2/3/P), řádek Celkem
-   - rychlý souhrn skóre i střel s ohledem na Domácí/Hosté
-   - pětky: barevné, filtrace, dlaždice zobrazím jen pokud pětka obsahuje hráče
-   - undo (20 kroků), archiv zápasů, nájezdy (SO), správa soupisky, import/export (.xlsx), export CSV (události)
+/* HOKEJ – Zápis statistik (SO fix + bonus do skóre)
+   - klik hráče = střela, klik gólmana = zásah
+   - dlouhý stisk (≥450ms) = trest
+   - overlay gól (0–2 asistence, auto+ pro střelce i asistenty)
+   - overlay SO: zůstává otevřený, náš pokus (střelec + výsledek), soupeřův (gólman + výsledek)
+   - tlačítka pro ukončení SO (vyhráli/prohráli) a zrušení výsledku
+   - skóre přičte +1 vítězi SO do celkového stavu (mimo třetiny)
+   - statistiky po třetinách (hráči: střely; gólmani: obdržené), zásahy gólmanů, řádek celkem
+   - exporty, archiv, undo, správa soupisky
 */
 
 //////////////////// BOOTSTRAP ////////////////////
 const root = document.getElementById("root");
 if (!root) {
   const d = document.createElement("div");
-  d.textContent = "Chybí <div id=\"root\">";
+  d.textContent = 'Chybí <div id="root">';
   document.body.appendChild(d);
 }
 
@@ -23,7 +24,7 @@ function snapshot() {
   return JSON.stringify({
     hraci, statistiky, goloveUdalosti, infoZapasu, aktivniTretina,
     aktivniPetka, zamknuto, showSettings, showRosterAdmin,
-    activeGoalieId, tilesCompact, shootoutAttempts
+    activeGoalieId, tilesCompact, shootoutAttempts, shootoutFinished, shootoutWinner
   });
 }
 function checkpoint() {
@@ -44,6 +45,8 @@ function undoLast() {
   activeGoalieId = s.activeGoalieId || null;
   tilesCompact = !!s.tilesCompact;
   shootoutAttempts = s.shootoutAttempts || [];
+  shootoutFinished = !!s.shootoutFinished;
+  shootoutWinner = s.shootoutWinner ?? null;
   saveState(); render();
 }
 
@@ -61,16 +64,18 @@ let activeGoalieId = null;
 let tilesCompact = false;
 
 // Nájezdy (SO)
-let shootoutAttempts = [];  // {team:"us"|"opp", round, shooterId?, goalieId?, result:"goal"|"miss"|"save"}
+let shootoutAttempts = [];   // {team:"us"|"opp", round, shooterId?, goalieId?, result:"goal"|"miss"|"save"}
+let shootoutFinished = false; // když hotovo, přičítáme bonus do souhrnného skóre
+let shootoutWinner = null;    // "us" | "opp" | null
 
 //////////////////// STORAGE ////////////////////
-const STORAGE_KEY = "hokej-stat-state-v6";
+const STORAGE_KEY = "hokej-stat-state-v7";
 const ARCHIVE_KEY = "hokej-stat-archive-v3";
 function saveState() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify({
     hraci, statistiky, goloveUdalosti, infoZapasu, aktivniTretina,
     aktivniPetka, zamknuto, showSettings, showRosterAdmin,
-    activeGoalieId, tilesCompact, shootoutAttempts, ts: Date.now()
+    activeGoalieId, tilesCompact, shootoutAttempts, shootoutFinished, shootoutWinner, ts: Date.now()
   })); } catch {}
 }
 function loadState() {
@@ -115,7 +120,7 @@ function initStatsFor(id){
     obdrzene: {1:[],2:[],3:[],P:[]}
   };
 }
-function resetStatistik(){ statistiky = {}; for (const h of hraci) initStatsFor(h.id); goloveUdalosti = []; shootoutAttempts = []; }
+function resetStatistik(){ statistiky = {}; for (const h of hraci) initStatsFor(h.id); goloveUdalosti = []; shootoutAttempts = []; shootoutFinished=false; shootoutWinner=null; }
 
 //////////////////// CLICK HANDLERS ////////////////////
 function recordPenaltyFor(h){
@@ -166,6 +171,14 @@ function souhrnSkore(){
     if (e.typ === "o")  domaci ? per[e.tretina][1]++ : per[e.tretina][0]++;
   }
   Object.values(per).forEach(([d,h])=>{ dom+=d; hos+=h; });
+
+  // BONUS za vyhrané nájezdy (+1 do celkového skóre)
+  if (shootoutFinished && shootoutWinner){
+    const domaci = infoZapasu.tym === "domaci";
+    if (shootoutWinner === "us") { domaci ? dom++ : hos++; }
+    if (shootoutWinner === "opp"){ domaci ? hos++ : dom++; }
+  }
+
   return `${dom}:${hos} (${Object.values(per).map(([d,h])=>`${d}:${h}`).join(";")})`;
 }
 function souhrnStrely(){
@@ -415,10 +428,32 @@ function shootoutScore(){
 function scshoot(){ const s = shootoutScore(); return { us:s.us, opp:s.opp, rounds:s.rounds, text: (s.rounds?`SO ${s.us}:${s.opp} (${s.rounds} kol)`:"") }; }
 function nextRound(team){ const c=shootoutCounts(); return team==="us" ? Math.max(c.us+1, c.opp) : Math.max(c.opp+1, c.us); }
 function addShootoutAttempt(a){ checkpoint(); a.round = nextRound(a.team); shootoutAttempts.push(a); saveState(); render(); }
+
+// pomocná re-render funkce pro SO overlay (bez zavírání)
+function refreshSO(){ const el=document.getElementById("so-overlay"); if(el) el.remove(); renderShootoutOverlay(); }
+
 function undoLastShootout(){ if(!shootoutAttempts.length) return; checkpoint(); shootoutAttempts.pop(); saveState(); render(); }
-function clearShootout(){ if(!shootoutAttempts.length) return; if(!confirm("Vymazat všechny nájezdy?")) return; checkpoint(); shootoutAttempts=[]; saveState(); render(); }
-function openShootoutOverlay(){ if(zamknuto) return; soOverlay={view:"menu"}; render(); }
+function clearShootout(){ if(!shootoutAttempts.length) return; if(!confirm("Vymazat všechny nájezdy?")) return; checkpoint(); shootoutAttempts=[]; shootoutFinished=false; shootoutWinner=null; saveState(); render(); }
+function openShootoutOverlay(){ if(zamknuto) return; soOverlay={view:"menu"}; renderShootoutOverlay(); }
 function closeShootoutOverlay(){ soOverlay=null; const el=document.getElementById("so-overlay"); if(el&&el.parentNode) el.parentNode.removeChild(el); render(); }
+
+function finishShootout(winner){ // "us" | "opp"
+  checkpoint();
+  shootoutFinished = true;
+  shootoutWinner = winner;
+  saveState();
+  refreshSO();
+  render();
+}
+function cancelShootoutResult(){
+  checkpoint();
+  shootoutFinished = false;
+  shootoutWinner = null;
+  saveState();
+  refreshSO();
+  render();
+}
+
 function renderShootoutOverlay(){
   if(!soOverlay) return;
   const backdrop=document.createElement("div"); backdrop.id="so-overlay";
@@ -431,17 +466,25 @@ function renderShootoutOverlay(){
   const h=document.createElement("h3"); h.className="text-lg font-bold mb-2"; h.textContent="Samostatné nájezdy"; card.appendChild(h);
   const sc=shootoutScore(); const sum=document.createElement("div"); sum.className="mb-3 font-semibold"; sum.textContent=`Nájezdy: ${sc.us}:${sc.opp} (${sc.rounds} kol)`; card.appendChild(sum);
 
+  // Tlačítka výsledku nájezdů
+  const resBar=document.createElement("div"); resBar.className="flex flex-wrap gap-2 mb-3";
+  const btnWin=document.createElement("button"); btnWin.textContent="🏆 Ukončit nájezdy – vyhráli jsme (+1)"; btnWin.className="px-3 py-1 rounded bg-green-700 text-white"; btnWin.onclick=()=>finishShootout("us");
+  const btnLose=document.createElement("button"); btnLose.textContent="⚠️ Ukončit nájezdy – prohráli jsme (+1 soupeři)"; btnLose.className="px-3 py-1 rounded bg-red-700 text-white"; btnLose.onclick=()=>finishShootout("opp");
+  const btnCancel=document.createElement("button"); btnCancel.textContent="↺ Zrušit výsledek nájezdů"; btnCancel.className="px-3 py-1 rounded bg-gray-300"; btnCancel.onclick=()=>cancelShootoutResult();
+  resBar.appendChild(btnWin); resBar.appendChild(btnLose); resBar.appendChild(btnCancel);
+  card.appendChild(resBar);
+
   const bar=document.createElement("div"); bar.className="flex flex-wrap gap-2 mb-3";
-  const bUndo=document.createElement("button"); bUndo.textContent="↩︎ Vrátit poslední"; bUndo.className="px-3 py-1 rounded bg-gray-300"; bUndo.onclick=undoLastShootout;
-  const bClear=document.createElement("button"); bClear.textContent="🧹 Vymazat vše"; bClear.className="px-3 py-1 rounded bg-gray-300"; bClear.onclick=clearShootout;
+  const bUndo=document.createElement("button"); bUndo.textContent="↩︎ Vrátit poslední"; bUndo.className="px-3 py-1 rounded bg-gray-300"; bUndo.onclick=()=>{ undoLastShootout(); refreshSO(); };
+  const bClear=document.createElement("button"); bClear.textContent="🧹 Vymazat vše"; bClear.className="px-3 py-1 rounded bg-gray-300"; bClear.onclick=()=>{ clearShootout(); refreshSO(); };
   bar.appendChild(bUndo); bar.appendChild(bClear); card.appendChild(bar);
 
   if(soOverlay.view==="menu"){
     const menu=document.createElement("div"); menu.className="grid grid-cols-2 gap-3";
     const bUs=document.createElement("button"); bUs.textContent="🥅 Náš pokus"; bUs.className="px-4 py-6 rounded text-white bg-green-600 text-xl font-bold";
-    bUs.onclick=()=>{ soOverlay={view:"us", shooterId:null}; closeShootoutOverlay(); render(); };
+    bUs.onclick=()=>{ soOverlay={view:"us", shooterId:null}; refreshSO(); };
     const bOpp=document.createElement("button"); bOpp.textContent="💥 Soupeřův pokus"; bOpp.className="px-4 py-6 rounded text-white bg-red-600 text-xl font-bold";
-    bOpp.onclick=()=>{ soOverlay={view:"opp", goalieId:activeGoalieId||null}; closeShootoutOverlay(); render(); };
+    bOpp.onclick=()=>{ soOverlay={view:"opp", goalieId:activeGoalieId||null}; refreshSO(); };
     menu.appendChild(bUs); menu.appendChild(bOpp); card.appendChild(menu);
   }else if(soOverlay.view==="us"){
     const row=document.createElement("div"); row.className="mb-2 font-semibold"; row.textContent="Vyber střelce a výsledek:"; card.appendChild(row);
@@ -449,16 +492,16 @@ function renderShootoutOverlay(){
     sortHraci(hraci).filter(h=>h.active!==false && h.typ!=="B").forEach(h=>{
       const b=document.createElement("button"); b.textContent=cisloZJmena(h.jmeno);
       b.className=`px-2 py-2 rounded font-bold text-white ${barvaPetky(h.petka)} ${soOverlay.shooterId===h.id?"ring-4 ring-yellow-300":""}`;
-      b.onclick=()=>{ soOverlay.shooterId=(soOverlay.shooterId===h.id?null:h.id); closeShootoutOverlay(); render(); };
+      b.onclick=()=>{ soOverlay.shooterId=(soOverlay.shooterId===h.id?null:h.id); refreshSO(); };
       grid.appendChild(b);
     });
     card.appendChild(grid);
     const res=document.createElement("div"); res.className="flex gap-2";
     const g=document.createElement("button"); g.textContent="Gól"; g.className="px-3 py-2 rounded bg-green-700 text-white";
-    g.onclick=()=>{ if(!soOverlay.shooterId){ alert("Vyber střelce."); return; } addShootoutAttempt({team:"us", shooterId:soOverlay.shooterId, result:"goal"}); closeShootoutOverlay(); };
+    g.onclick=()=>{ if(!soOverlay.shooterId){ alert("Vyber střelce."); return; } addShootoutAttempt({team:"us", shooterId:soOverlay.shooterId, result:"goal"}); refreshSO(); };
     const m=document.createElement("button"); m.textContent="Neúspěch"; m.className="px-3 py-2 rounded bg-gray-600 text-white";
-    m.onclick=()=>{ if(!soOverlay.shooterId){ alert("Vyber střelce."); return; } addShootoutAttempt({team:"us", shooterId:soOverlay.shooterId, result:"miss"}); closeShootoutOverlay(); };
-    const back=document.createElement("button"); back.textContent="Zpět do menu"; back.className="px-3 py-2 rounded bg-gray-300"; back.onclick=()=>{ soOverlay={view:"menu"}; closeShootoutOverlay(); render(); };
+    m.onclick=()=>{ if(!soOverlay.shooterId){ alert("Vyber střelce."); return; } addShootoutAttempt({team:"us", shooterId:soOverlay.shooterId, result:"miss"}); refreshSO(); };
+    const back=document.createElement("button"); back.textContent="Zpět do menu"; back.className="px-3 py-2 rounded bg-gray-300"; back.onclick=()=>{ soOverlay={view:"menu"}; refreshSO(); };
     res.appendChild(g); res.appendChild(m); res.appendChild(back); card.appendChild(res);
   }else if(soOverlay.view==="opp"){
     const row=document.createElement("div"); row.className="mb-2 font-semibold"; row.textContent="Vyber našeho gólmana a výsledek:"; card.appendChild(row);
@@ -466,16 +509,16 @@ function renderShootoutOverlay(){
     sortHraci(hraci).filter(h=>h.active!==false && h.typ==="B").forEach(h=>{
       const b=document.createElement("button"); b.textContent=cisloZJmena(h.jmeno);
       b.className=`px-2 py-2 rounded font-bold text-white bg-black ${soOverlay.goalieId===h.id?"ring-4 ring-yellow-300":""}`;
-      b.onclick=()=>{ soOverlay.goalieId=(soOverlay.goalieId===h.id?null:h.id); closeShootoutOverlay(); render(); };
+      b.onclick=()=>{ soOverlay.goalieId=(soOverlay.goalieId===h.id?null:h.id); refreshSO(); };
       grid.appendChild(b);
     });
     card.appendChild(grid);
     const res=document.createElement("div"); res.className="flex gap-2";
     const g=document.createElement("button"); g.textContent="Gól soupeře"; g.className="px-3 py-2 rounded bg-red-700 text-white";
-    g.onclick=()=>{ if(!soOverlay.goalieId){ alert("Vyber gólmana."); return; } addShootoutAttempt({team:"opp", goalieId:soOverlay.goalieId, result:"goal"}); closeShootoutOverlay(); };
+    g.onclick=()=>{ if(!soOverlay.goalieId){ alert("Vyber gólmana."); return; } addShootoutAttempt({team:"opp", goalieId:soOverlay.goalieId, result:"goal"}); refreshSO(); };
     const s=document.createElement("button"); s.textContent="Zákrok (save)"; s.className="px-3 py-2 rounded bg-green-700 text-white";
-    s.onclick=()=>{ if(!soOverlay.goalieId){ alert("Vyber gólmana."); return; } addShootoutAttempt({team:"opp", goalieId:soOverlay.goalieId, result:"save"}); closeShootoutOverlay(); };
-    const back=document.createElement("button"); back.textContent="Zpět do menu"; back.className="px-3 py-2 rounded bg-gray-300"; back.onclick=()=>{ soOverlay={view:"menu"}; closeShootoutOverlay(); render(); };
+    s.onclick=()=>{ if(!soOverlay.goalieId){ alert("Vyber gólmana."); return; } addShootoutAttempt({team:"opp", goalieId:soOverlay.goalieId, result:"save"}); refreshSO(); };
+    const back=document.createElement("button"); back.textContent="Zpět do menu"; back.className="px-3 py-2 rounded bg-gray-300"; back.onclick=()=>{ soOverlay={view:"menu"}; refreshSO(); };
     res.appendChild(g); res.appendChild(s); res.appendChild(back); card.appendChild(res);
   }
 
@@ -750,9 +793,10 @@ function renderUdalosti(){
   const shots=document.createElement("div"); shots.className="font-semibold text-sm text-gray-300"; shots.textContent="Střely: "+souhrnStrely();
   box.appendChild(score); box.appendChild(shots);
 
-  if (shootoutAttempts.length){
+  if (shootoutAttempts.length || shootoutFinished){
     const sc=shootoutScore(); const so=document.createElement("div"); so.className="font-bold mt-1";
-    so.textContent=`Nájezdy: ${sc.us}:${sc.opp} (${sc.rounds} kol)`; box.appendChild(so);
+    const res = shootoutFinished ? (shootoutWinner==="us"?" – vyhráli jsme (+1)":" – prohráli jsme (+1 soupeři)") : "";
+    so.textContent=`Nájezdy: ${sc.us}:${sc.opp} (${sc.rounds} kol)${res}`; box.appendChild(so);
   }
   root.appendChild(box);
 }
@@ -955,7 +999,7 @@ function exportCSVUdalosti(){
       else add({...base, event:"shootout_miss_for", player:a.shooterId, num:cisloZJmena(hById(a.shooterId)?.jmeno)});
     }else{
       if(a.result==="goal") add({...base, event:"shootout_goal_against", goalie:a.goalieId, num:cisloZJmena(hById(a.goalieId)?.jmeno)});
-      else add({...base, event:"shootout_save", goalie:a.goalieId, num:cisloZJmena(hById(a.goalieId)?.jmeno)});
+      else add({...base, event:"shootout_save", goalie:a.goalieId, num:cisloZjmena(hById(a.goalieId)?.jmeno)}); // NOTE: pokud chceš, můžeš upravit na "save"
     }
   });
 
@@ -1013,7 +1057,7 @@ function renderArchiv(container){
         hraci=e.hraci.map(h=>({...h, active:true}));
         resetStatistik(); zamknuto=false; aktivniPetka=0; activeGoalieId=null;
         infoZapasu={datum:meta.datum||"",cas:meta.cas||"",misto:meta.misto||"",tym:meta.tym||"domaci", soutez:meta.soutez||"", stitky:meta.stitky||""};
-        shootoutAttempts = e.shootoutAttempts||[];
+        shootoutAttempts = e.shootoutAttempts||[]; shootoutFinished=false; shootoutWinner=null;
         saveState(); render();
       };
       row.appendChild(bLoad);
@@ -1021,7 +1065,7 @@ function renderArchiv(container){
       const bDup=document.createElement("button"); bDup.textContent="Duplikovat soupisku"; bDup.className="px-2 py-1 rounded bg-gray-700";
       bDup.onclick=()=>{ if(!confirm("Převzít soupisku z tohoto zápasu do nového?")) return;
         checkpoint(); hraci=e.hraci.map(h=>({...h, active:true}));
-        resetStatistik(); zamknuto=false; infoZapasu={datum:"",cas:"",misto:"",tym:meta.tym||"domaci", soutez:"", stitky:""}; activeGoalieId=null; shootoutAttempts=[];
+        resetStatistik(); zamknuto=false; infoZapasu={datum:"",cas:"",misto:"",tym:meta.tym||"domaci", soutez:"", stitky:""}; activeGoalieId=null; shootoutAttempts=[]; shootoutFinished=false; shootoutWinner=null;
         saveState(); render();
       };
       row.appendChild(bDup);
@@ -1057,7 +1101,9 @@ if (saved && confirm("Najít uložený rozpracovaný zápas a obnovit?")){
   hraci = saved.hraci||[]; statistiky=saved.statistiky||{}; goloveUdalosti=saved.goloveUdalosti||[];
   infoZapasu=saved.infoZapasu||infoZapasu; aktivniTretina=saved.aktivniTretina||"1";
   aktivniPetka=saved.aktivniPetka??0; zamknuto=!!saved.zamknuto; showSettings=!!saved.showSettings; showRosterAdmin=!!saved.showRosterAdmin;
-  activeGoalieId=saved.activeGoalieId||null; tilesCompact=!!saved.tilesCompact; shootoutAttempts=saved.shootoutAttempts||[];
+  activeGoalieId=saved.activeGoalieId||null; tilesCompact=!!saved.tilesCompact;
+  shootoutAttempts=saved.shootoutAttempts||[]; shootoutFinished=!!saved.shootoutFinished; shootoutWinner=saved.shootoutWinner??null;
+
   if (!hraci.length){
     hraci=[
       {id:"1", jmeno:"1 Brankář", typ:"B", petka:0, active:true},
