@@ -5,18 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Zápis statistik hokeje</title>
 
-    <!-- Tailwind přes CDN (bez build kroků) -->
+    <!-- Tailwind přes CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- SheetJS pro import/export .xlsx (global XLSX) -->
+    <!-- SheetJS (XLSX) pro import/export -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <style>
       :root { color-scheme: dark; }
       body { background: #0f172a; color: #e5e7eb; }
-      @media print { body { background: white; color: black; }
-        .no-print { display: none !important; }
-      }
+      @media print { body { background: #fff; color: #000; } }
+      .no-print { }
     </style>
   </head>
   <body class="h-full">
@@ -26,17 +24,7 @@
       <div id="root" class="space-y-4"></div>
     </div>
 
-    <!-- jednoduchý bootstrap test do konzole -->
-    <script>
-      console.log("Bootstrap OK (index.html se načetl)");
-      if (!window.XLSX) {
-        console.error("XLSX není načteno – chybí CDN script ve <head>.");
-        const r = document.getElementById("root");
-        if (r) r.innerHTML = '<div class="bg-red-900 p-3 rounded">Chybí knihovna XLSX. Zkontrolujte &lt;script&gt; v &lt;head&gt;.</div>';
-      }
-    </script>
-
-    <!-- tvoje aplikace – soubor MUSÍ ležet vedle index.html -->
-    <script defer src="./app.js?v=1"></script>
+    <!-- Aplikace -->
+    <script defer src="./app.js?v=1001"></script>
   </body>
 </html>
