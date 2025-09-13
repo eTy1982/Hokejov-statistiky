@@ -1,14 +1,12 @@
-/* HOKEJ – Zápis statistik (SO zjednodušení + bonus do skóre)
-   - klik hráče = střela, klik gólmana = zásah
-   - dlouhý stisk (≥450ms) = trest
-   - overlay gól (0–2 asistence, auto+ pro střelce i asistenty)
-   - overlay SO:
-       * náš pokus: vyber střelce → Gól/Neúspěch
-       * soupeřův pokus: vyber gólmana → Gól soupeře/Zákrok
-       * po zaznamenání se overlay automaticky přepne zpět do menu nájezdů
-       * „Ukončit nájezdy“ overlay ihned zavře a přičte +1 vítězi do celkového skóre
-   - statistiky po třetinách (hráči: střely; gólmani: obdržené), zásahy gólmanů, řádek celkem
-   - exporty, archiv, undo, správa soupisky
+/* HOKEJ – Zápis statistik (verze s editací událostí, SV% a vylepšeným archivem)
+   - Klik na hráče = střela, klik na brankáře = zásah (anti-double-tap 300 ms)
+   - Dlouhý stisk (≥450 ms) = trest (pouze)
+   - Overlay gól (0–2 asistence, auto+ pro střelce i asistenty, volitelné +)
+   - Editace libovolné gólové události (✏️ vedle události)
+   - Nájezdy: po zaznamenání pokusu návrat do menu, po ukončení overlay hned zavřít, +1 do celk. skóre vítězi
+   - Statistiky po třetinách (hráči: střely; gólmani: obdržené), zásahy gólmanů, řádek „Celkem“
+   - Export: statistiky (.xlsx) vč. SV% pro gólmany; události (.csv); export soupisky (.xlsx)
+   - Archiv: filtr datum od–do + text; export vyfiltrovaných zápasů do .xlsx
 */
 
 //////////////////// BOOTSTRAP ////////////////////
@@ -71,8 +69,8 @@ let shootoutFinished = false; // když hotovo, přičítáme bonus do souhrnnéh
 let shootoutWinner = null;    // "us" | "opp" | null
 
 //////////////////// STORAGE ////////////////////
-const STORAGE_KEY = "hokej-stat-state-v7";
-const ARCHIVE_KEY = "hokej-stat-archive-v3";
+const STORAGE_KEY = "hokej-stat-state-v8";
+const ARCHIVE_KEY = "hokej-stat-archive-v4";
 function saveState() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify({
     hraci, statistiky, goloveUdalosti, infoZapasu, aktivniTretina,
@@ -124,6 +122,10 @@ function initStatsFor(id){
 }
 function resetStatistik(){ statistiky = {}; for (const h of hraci) initStatsFor(h.id); goloveUdalosti = []; shootoutAttempts = []; shootoutFinished=false; shootoutWinner=null; }
 
+//////////////////// ANTI-DOUBLE-TAP ////////////////////
+let lastTapTs = 0;
+function antiDoubleTap(){ const now=Date.now(); if (now-lastTapTs<300) return true; lastTapTs=now; return false; }
+
 //////////////////// CLICK HANDLERS ////////////////////
 function recordPenaltyFor(h){
   const cas = pridejCas(`Čas trestu hráče #${cisloZJmena(h.jmeno)}`);
@@ -134,6 +136,7 @@ function recordPenaltyFor(h){
 }
 function klikHracShort(h){
   if(zamknuto || !h || h.active === false) return;
+  if (antiDoubleTap()) return; // ochrana proti dvojkliku
   checkpoint();
   if (h.typ === "B") {
     statistiky[h.id].zasahy[aktivniTretina]++;
@@ -211,109 +214,135 @@ function souhrnStrely(){
   return `${dom}:${hos} (${per})`;
 }
 
-//////////////////// OVERLAY – GOALS ////////////////////
-let overlay = null; // {mode:"g"|"o", cas, shooter?, A:Set, plus:Set, goalie?, minus:Set, selectMode:"..."}
+//////////////////// OVERLAY – GOALS (vč. editace) ////////////////////
+let overlay = null; // {mode:"g"|"o", cas, shooter?, A:Set, plus:Set, goalie?, minus:Set, selectMode, editingIndex:number|null}
 const OVERLAY_ID = "overlay-backdrop";
 
 function otevriOverlayGolVstrel(){
   if(zamknuto) return;
   const cas = pridejCas("Čas vstřeleného gólu");
-  overlay = { mode:"g", cas, shooter:null, A:new Set(), plus:new Set(), selectMode:"shooter" };
+  overlay = { mode:"g", cas, shooter:null, A:new Set(), plus:new Set(), selectMode:"shooter", editingIndex:null };
   render();
 }
 function otevriOverlayGolObdrz(){
   if(zamknuto) return;
   const cas = pridejCas("Čas obdrženého gólu");
-  overlay = { mode:"o", cas, goalie: activeGoalieId || null, minus:new Set(), selectMode:"goalie" };
+  overlay = { mode:"o", cas, goalie: activeGoalieId || null, minus:new Set(), selectMode:"goalie", editingIndex:null };
   render();
 }
 function removeOverlayDom(){ const el = document.getElementById(OVERLAY_ID); if (el && el.parentNode) el.parentNode.removeChild(el); }
 function zavriOverlay(){ overlay = null; removeOverlayDom(); render(); }
+
+function applyEventEffects(e, direction){
+  // direction: +1 = apply, -1 = revert
+  const t=e.tretina;
+  if(e.typ==="g"){
+    const sShooter = statistiky[e.strelec]; if (sShooter) {
+      if (direction>0) sShooter.goly[t].push(e.cas);
+      else { const idx=sShooter.goly[t].lastIndexOf(e.cas); if(idx>-1) sShooter.goly[t].splice(idx,1); }
+      if (direction>0) sShooter.plus[t]++; else if (sShooter.plus[t]>0) sShooter.plus[t]--;
+    }
+    (e.asistenti||[]).forEach(id=>{
+      const s=statistiky[id]; if(!s) return;
+      if (direction>0) { s.asistence[t]++; s.plus[t]++; }
+      else { if (s.asistence[t]>0) s.asistence[t]--; if (s.plus[t]>0) s.plus[t]--; }
+    });
+    (e.plus||[]).forEach(id=>{
+      if (id===e.strelec || (e.asistenti||[]).includes(id)) return;
+      const s=statistiky[id]; if(!s) return;
+      if (direction>0) s.plus[t]++; else if (s.plus[t]>0) s.plus[t]--;
+    });
+  } else {
+    const sG = statistiky[e.golman];
+    if (sG){
+      if (direction>0) sG.obdrzene[t].push(e.cas);
+      else { const idx=sG.obdrzene[t].lastIndexOf(e.cas); if(idx>-1) sG.obdrzene[t].splice(idx,1); }
+    }
+    (e.minus||[]).forEach(id=>{
+      const s=statistiky[id]; if(!s) return;
+      if (direction>0) s.minus[t]++; else if (s.minus[t]>0) s.minus[t]--;
+    });
+  }
+}
 
 function ulozOverlay(){
   if (!overlay) return;
   checkpoint();
   const t = aktivniTretina;
 
-  if (overlay.mode === "g"){
-    if (!overlay.shooter){ alert("Vyber střelce."); return; }
-    const sShooter = statistiky[overlay.shooter];
-    sShooter.goly[t].push(overlay.cas);
-    sShooter.plus[t]++; // auto +
+  if (overlay.editingIndex !== null) {
+    // edit existující události
+    const old = goloveUdalosti[overlay.editingIndex];
+    if (!old) { overlay=null; removeOverlayDom(); render(); return; }
+    // revert starých účinků
+    applyEventEffects(old, -1);
 
-    const asistArr = Array.from(overlay.A||[]).slice(0,2);
-    for (const id of asistArr){ statistiky[id].asistence[t]++; statistiky[id].plus[t]++; } // auto + pro A
-
-    const plusArr = Array.from(overlay.plus||[]);
-    for (const id of plusArr){ if (id!==overlay.shooter && !asistArr.includes(id)) statistiky[id].plus[t]++; }
-
-    const plusDisplay = Array.from(new Set([overlay.shooter, ...asistArr, ...plusArr]));
-    goloveUdalosti.push({ typ:"g", cas:overlay.cas, tretina:t, strelec:overlay.shooter, asistenti:asistArr, plus:plusDisplay });
+    let newEvent;
+    if (overlay.mode === "g"){
+      if (!overlay.shooter){ alert("Vyber střelce."); return; }
+      const asistArr = Array.from(overlay.A||[]).slice(0,2);
+      const plusArr = Array.from(overlay.plus||[]);
+      newEvent = { typ:"g", cas:overlay.cas, tretina:old.tretina, strelec:overlay.shooter, asistenti:asistArr, plus:Array.from(new Set([overlay.shooter, ...asistArr, ...plusArr])) };
+    } else {
+      if (!overlay.goalie){ alert("Vyber brankáře."); return; }
+      const minusArr = Array.from(overlay.minus||[]);
+      newEvent = { typ:"o", cas:overlay.cas, tretina:old.tretina, golman:overlay.goalie, minus:minusArr };
+    }
+    // apply nových účinků
+    applyEventEffects(newEvent, +1);
+    goloveUdalosti[overlay.editingIndex] = newEvent;
 
   } else {
-    if (!overlay.goalie){ alert("Vyber brankáře."); return; }
-    const sGoalie = statistiky[overlay.goalie];
-    sGoalie.obdrzene[t].push(overlay.cas); // nepočítá se jako střela/zásah
-    const minusArr = Array.from(overlay.minus||[]);
-    for (const id of minusArr){ statistiky[id].minus[t]++; }
-    goloveUdalosti.push({ typ:"o", cas:overlay.cas, tretina:t, golman:overlay.goalie, minus:minusArr });
+    // nová událost
+    if (overlay.mode === "g"){
+      if (!overlay.shooter){ alert("Vyber střelce."); return; }
+      const sShooter = statistiky[overlay.shooter];
+      sShooter.goly[t].push(overlay.cas);
+      sShooter.plus[t]++; // auto +
+
+      const asistArr = Array.from(overlay.A||[]).slice(0,2);
+      for (const id of asistArr){ statistiky[id].asistence[t]++; statistiky[id].plus[t]++; } // auto + pro A
+
+      const plusArr = Array.from(overlay.plus||[]);
+      for (const id of plusArr){ if (id!==overlay.shooter && !asistArr.includes(id)) statistiky[id].plus[t]++; }
+
+      const plusDisplay = Array.from(new Set([overlay.shooter, ...asistArr, ...plusArr]));
+      goloveUdalosti.push({ typ:"g", cas:overlay.cas, tretina:t, strelec:overlay.shooter, asistenti:asistArr, plus:plusDisplay });
+
+    } else {
+      if (!overlay.goalie){ alert("Vyber brankáře."); return; }
+      const sGoalie = statistiky[overlay.goalie];
+      sGoalie.obdrzene[t].push(overlay.cas); // nepočítá se jako střela/zásah
+      const minusArr = Array.from(overlay.minus||[]);
+      for (const id of minusArr){ statistiky[id].minus[t]++; }
+      goloveUdalosti.push({ typ:"o", cas:overlay.cas, tretina:t, golman:overlay.goalie, minus:minusArr });
+    }
   }
 
   overlay = null; removeOverlayDom(); saveState(); render();
 }
 
-function revertEventEffects(e){
-  const t = e.tretina;
-  if (e.typ === "g"){
-    const sShooter = statistiky[e.strelec];
-    if (sShooter){
-      const idx = sShooter.goly[t].lastIndexOf(e.cas);
-      if (idx > -1) sShooter.goly[t].splice(idx,1);
-      if (sShooter.plus[t] > 0) sShooter.plus[t]--;
-    }
-    (e.asistenti||[]).forEach(id=>{
-      const s = statistiky[id]; if (!s) return;
-      if (s.asistence[t] > 0) s.asistence[t]--;
-      if (s.plus[t] > 0) s.plus[t]--;
-    });
-    (e.plus||[]).forEach(id=>{
-      if (id === e.strelec) return;
-      if ((e.asistenti||[]).includes(id)) return;
-      const s = statistiky[id]; if (s && s.plus[t] > 0) s.plus[t]--;
-    });
-  } else {
-    const sG = statistiky[e.golman];
-    if (sG){
-      const idx = sG.obdrzene[t].lastIndexOf(e.cas);
-      if (idx > -1) sG.obdrzene[t].splice(idx,1);
-    }
-    (e.minus||[]).forEach(id=>{
-      const s = statistiky[id]; if (s && s.minus[t] > 0) s.minus[t]--;
-    });
-  }
-}
-function editLastEvent(){
-  if (!goloveUdalosti.length){ alert("Žádná událost k úpravě."); return; }
+function editEvent(idx){
+  const e = goloveUdalosti[idx]; if(!e) return;
   checkpoint();
-  const last = goloveUdalosti.pop();
-  revertEventEffects(last);
-  if (last.typ === "g"){
+  if (e.typ === "g"){
     overlay = {
-      mode:"g", cas:last.cas, shooter:last.strelec||null,
-      A: new Set(last.asistenti||[]),
-      plus: new Set((last.plus||[]).filter(id => id!==last.strelec && !(last.asistenti||[]).includes(id))),
-      selectMode:"shooter"
+      mode:"g", cas:e.cas, shooter:e.strelec||null,
+      A: new Set(e.asistenti||[]),
+      plus: new Set((e.plus||[]).filter(id => id!==e.strelec && !(e.asistenti||[]).includes(id))),
+      selectMode:"shooter", editingIndex: idx
     };
   } else {
     overlay = {
-      mode:"o", cas:last.cas, goalie:last.golman||activeGoalieId||null,
-      minus: new Set(last.minus||[]),
-      selectMode:"goalie"
+      mode:"o", cas:e.cas, goalie:e.golman||activeGoalieId||null,
+      minus: new Set(e.minus||[]),
+      selectMode:"goalie", editingIndex: idx
     };
   }
   render();
 }
 
+function removeOverlayDom(){ const el=document.getElementById(OVERLAY_ID); if(el&&el.parentNode) el.parentNode.removeChild(el); }
 function renderOverlay(){
   if (!overlay) return;
   const backdrop = document.createElement("div");
@@ -332,12 +361,13 @@ function renderOverlay(){
 
   const title = document.createElement("h3");
   title.className = "text-lg font-bold mb-2";
-  title.textContent = overlay.mode==="g" ? "Vstřelený gól – vyber střelce, asistence (0–2) a +" : "Obdržený gól – vyber brankáře a −";
+  const editTag = overlay.editingIndex!==null ? " (upravit)" : "";
+  title.textContent = overlay.mode==="g" ? `Vstřelený gól${editTag} – vyber střelce, asistence (0–2) a +` : `Obdržený gól${editTag} – vyber brankáře a −`;
   card.appendChild(title);
 
   const info = document.createElement("div");
   info.className = "mb-3 text-sm";
-  info.textContent = `Čas: ${overlay.cas} • Třetina: ${aktivniTretina}`;
+  info.textContent = `Čas: ${overlay.cas} • Třetina: ${overlay.editingIndex!==null ? goloveUdalosti[overlay.editingIndex].tretina : aktivniTretina}`;
   card.appendChild(info);
 
   const modes = document.createElement("div");
@@ -430,7 +460,6 @@ function shootoutScore(){
 function scshoot(){ const s = shootoutScore(); return { us:s.us, opp:s.opp, rounds:s.rounds, text: (s.rounds?`SO ${s.us}:${s.opp} (${s.rounds} kol)`:"") }; }
 function nextRound(team){ const c=shootoutCounts(); return team==="us" ? Math.max(c.us+1, c.opp) : Math.max(c.opp+1, c.us); }
 
-// ZMĚNA: po záznamu pokusu rovnou zpět do menu nájezdů
 function addShootoutAttempt(a){
   checkpoint();
   a.round = nextRound(a.team);
@@ -440,32 +469,13 @@ function addShootoutAttempt(a){
   soOverlay = { view: "menu" };
   refreshSO();
 }
-
-// pomocná re-render funkce pro SO overlay (bez zavírání)
 function refreshSO(){ const el=document.getElementById("so-overlay"); if(el) el.remove(); renderShootoutOverlay(); }
-
 function undoLastShootout(){ if(!shootoutAttempts.length) return; checkpoint(); shootoutAttempts.pop(); saveState(); render(); }
 function clearShootout(){ if(!shootoutAttempts.length) return; if(!confirm("Vymazat všechny nájezdy?")) return; checkpoint(); shootoutAttempts=[]; shootoutFinished=false; shootoutWinner=null; saveState(); render(); }
 function openShootoutOverlay(){ if(zamknuto) return; soOverlay={view:"menu"}; renderShootoutOverlay(); }
 function closeShootoutOverlay(){ soOverlay=null; const el=document.getElementById("so-overlay"); if(el&&el.parentNode) el.parentNode.removeChild(el); render(); }
-
-// ZMĚNA: po ukončení nájezdů se overlay hned zavře
-function finishShootout(winner){ // "us" | "opp"
-  checkpoint();
-  shootoutFinished = true;
-  shootoutWinner = winner;
-  saveState();
-  closeShootoutOverlay(); // okamžitě zavřít
-  render();
-}
-function cancelShootoutResult(){
-  checkpoint();
-  shootoutFinished = false;
-  shootoutWinner = null;
-  saveState();
-  refreshSO();
-  render();
-}
+function finishShootout(winner){ checkpoint(); shootoutFinished=true; shootoutWinner=winner; saveState(); closeShootoutOverlay(); render(); }
+function cancelShootoutResult(){ checkpoint(); shootoutFinished=false; shootoutWinner=null; saveState(); refreshSO(); render(); }
 
 function renderShootoutOverlay(){
   if(!soOverlay) return;
@@ -479,7 +489,6 @@ function renderShootoutOverlay(){
   const h=document.createElement("h3"); h.className="text-lg font-bold mb-2"; h.textContent="Samostatné nájezdy"; card.appendChild(h);
   const sc=shootoutScore(); const sum=document.createElement("div"); sum.className="mb-3 font-semibold"; sum.textContent=`Nájezdy: ${sc.us}:${sc.opp} (${sc.rounds} kol)`; card.appendChild(sum);
 
-  // Tlačítka výsledku nájezdů
   const resBar=document.createElement("div"); resBar.className="flex flex-wrap gap-2 mb-3";
   const btnWin=document.createElement("button"); btnWin.textContent="🏆 Ukončit nájezdy – vyhráli jsme (+1)"; btnWin.className="px-3 py-1 rounded bg-green-700 text-white"; btnWin.onclick=()=>finishShootout("us");
   const btnLose=document.createElement("button"); btnLose.textContent="⚠️ Ukončit nájezdy – prohráli jsme (+1 soupeři)"; btnLose.className="px-3 py-1 rounded bg-red-700 text-white"; btnLose.onclick=()=>finishShootout("opp");
@@ -633,14 +642,14 @@ function renderSettingsPanel(){
   top.appendChild(right);
   box.appendChild(top);
 
-  // správa soupisky
+  // správa soupisky (včetně změny pětky)
   const toggle=document.createElement("button"); toggle.textContent = showRosterAdmin ? "✓ Správa soupisky" : "⚙️ Správa soupisky";
   toggle.className=(showRosterAdmin?"bg-blue-700":"bg-gray-700")+" px-3 py-1 rounded mb-3";
   toggle.onclick=()=>{ showRosterAdmin=!showRosterAdmin; saveState(); render(); };
   box.appendChild(toggle);
   if (showRosterAdmin) renderRosterAdmin(box);
 
-  // archiv
+  // archiv – vylepšený filtr + export vyfiltrovaných
   renderArchiv(box);
   root.appendChild(box);
 }
@@ -679,9 +688,15 @@ function editPlayerNumber(id){
   h.jmeno = `${String(nov).trim()} ${name}`.trim();
   saveState(); render();
 }
+function changePlayerLine(id, newLine){
+  const h=hById(id); if(!h) return;
+  checkpoint();
+  h.petka = Number(newLine)||0;
+  saveState(); render();
+}
 function renderRosterAdmin(container){
   const box=document.createElement("div"); box.className="p-3 bg-gray-900 rounded border border-gray-700";
-  const title=document.createElement("div"); title.className="font-bold mb-2"; title.textContent="Správa soupisky – přidání / deaktivace / obnova / smazání / změna čísla"; box.appendChild(title);
+  const title=document.createElement("div"); title.className="font-bold mb-2"; title.textContent="Správa soupisky – přidání / deaktivace / obnova / smazání / změna čísla / změna pětky"; box.appendChild(title);
 
   const form=document.createElement("div"); form.className="flex flex-wrap items-end gap-2 mb-3";
   const mk=(label,type="text",attrs={})=>{ const w=document.createElement("div"); w.className="flex flex-col"; const l=document.createElement("label"); l.className="text-xs text-gray-300"; l.textContent=label; const i=document.createElement("input"); i.type=type; i.className="px-2 py-1 rounded bg-gray-800 border border-gray-700"; Object.assign(i,attrs); w.appendChild(l); w.appendChild(i); return [w,i]; };
@@ -696,26 +711,36 @@ function renderRosterAdmin(container){
   box.appendChild(form);
 
   const activeBox=document.createElement("div"); activeBox.className="mb-2"; activeBox.innerHTML=`<div class="font-semibold mb-1">Aktivní hráči</div>`;
-  const actWrap=document.createElement("div"); actWrap.className="flex flex-wrap gap-2";
+  const actWrap=document.createElement("div"); actWrap.className="flex flex-col gap-2";
   sortHraci(hraci).filter(h=>h.active!==false).forEach(h=>{
-    const chip=document.createElement("div"); chip.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-800 border border-gray-700";
-    chip.innerHTML=`<span>#${cisloZJmena(h.jmeno)} ${jmenoBezCisla(h.jmeno)} (${h.typ}${h.petka?`, ${h.petka}.`:``})</span>`;
+    const row=document.createElement("div"); row.className="flex flex-wrap items-center gap-2 px-2 py-1 rounded bg-gray-800 border border-gray-700";
+    const label=document.createElement("div"); label.className="flex-1";
+    label.textContent = `#${cisloZJmena(h.jmeno)} ${jmenoBezCisla(h.jmeno)} (${h.typ})`;
+    row.appendChild(label);
+
+    // změna pětky
+    const selLine=document.createElement("select"); selLine.className="px-2 py-0.5 rounded bg-gray-700 border border-gray-600";
+    [0,1,2,3,4,5].forEach(n=>{ const o=document.createElement("option"); o.value=n; o.textContent = n===0 ? "—" : `${n}. pětka`; if(h.petka===n) o.selected=true; selLine.appendChild(o); });
+    selLine.onchange=()=>changePlayerLine(h.id, selLine.value);
+    row.appendChild(selLine);
+
     const edit=document.createElement("button"); edit.textContent="č."; edit.className="px-2 py-0.5 rounded bg-blue-700"; edit.onclick=()=>editPlayerNumber(h.id);
     const del=document.createElement("button"); del.textContent="×"; del.className="px-2 py-0.5 rounded bg-red-700"; del.onclick=()=>softDeletePlayer(h.id);
-    chip.appendChild(edit); chip.appendChild(del); actWrap.appendChild(chip);
+    row.appendChild(edit); row.appendChild(del);
+    actWrap.appendChild(row);
   });
   activeBox.appendChild(actWrap); box.appendChild(activeBox);
 
   const inactive=hraci.filter(h=>h.active===false);
   if (inactive.length){
     const deadBox=document.createElement("div"); deadBox.className="mt-2"; deadBox.innerHTML=`<div class="font-semibold mb-1">Neaktivní hráči</div>`;
-    const deadWrap=document.createElement("div"); deadWrap.className="flex flex-wrap gap-2";
+    const deadWrap=document.createElement("div"); deadWrap.className="flex flex-col gap-2";
     sortHraci(inactive).forEach(h=>{
-      const chip=document.createElement("div"); chip.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-800 border border-gray-700";
-      chip.innerHTML=`<span>#${cisloZJmena(h.jmeno)} ${jmenoBezCisla(h.jmeno)} (${h.typ}${h.petka?`, ${h.petka}.`:``})</span>`;
+      const row=document.createElement("div"); row.className="flex items-center gap-2 px-2 py-1 rounded bg-gray-800 border border-gray-700";
+      const label=document.createElement("div"); label.className="flex-1"; label.textContent=`#${cisloZJmena(h.jmeno)} ${jmenoBezCisla(h.jmeno)} (${h.typ})`; row.appendChild(label);
       const restore=document.createElement("button"); restore.textContent="↺"; restore.className="px-2 py-0.5 rounded bg-blue-700"; restore.onclick=()=>restorePlayer(h.id);
       const hard=document.createElement("button"); hard.textContent="🗑️"; hard.className="px-2 py-0.5 rounded bg-red-800"; hard.title="Smazat natrvalo (jen bez záznamů)"; hard.onclick=()=>deletePlayerHard(h.id);
-      deadWrap.appendChild(chip); chip.appendChild(restore); chip.appendChild(hard);
+      row.appendChild(restore); row.appendChild(hard); deadWrap.appendChild(row);
     });
     deadBox.appendChild(deadWrap); box.appendChild(deadBox);
   }
@@ -753,7 +778,7 @@ function renderAkce3(){
   const box=document.createElement("div"); box.className="flex flex-wrap gap-2 mb-3";
   const b1=document.createElement("button"); b1.textContent="🥅 Gól vstřelený"; b1.className="bg-yellow-600 text-white px-3 py-1 rounded"; b1.disabled=zamknuto; b1.onclick=otevriOverlayGolVstrel; box.appendChild(b1);
   const b2=document.createElement("button"); b2.textContent="💥 Gól obdržený"; b2.className="bg-red-700 text-white px-3 py-1 rounded"; b2.disabled=zamknuto; b2.onclick=otevriOverlayGolObdrz; box.appendChild(b2);
-  const bEdit=document.createElement("button"); bEdit.textContent="✏️ Upravit poslední"; bEdit.className="bg-gray-700 text-white px-3 py-1 rounded"; bEdit.disabled=goloveUdalosti.length===0; bEdit.onclick=editLastEvent; box.appendChild(bEdit);
+  const bEditLast=document.createElement("button"); bEditLast.textContent="✏️ Upravit poslední"; bEditLast.className="bg-gray-700 text-white px-3 py-1 rounded"; bEditLast.disabled=goloveUdalosti.length===0; bEditLast.onclick=()=>editEvent(goloveUdalosti.length-1); box.appendChild(bEditLast);
   const bSO=document.createElement("button"); bSO.textContent="⚔️ Nájezdy"; bSO.className="bg-gray-700 text-white px-3 py-1 rounded"; bSO.onclick=openShootoutOverlay; box.appendChild(bSO);
   root.appendChild(box);
 }
@@ -786,14 +811,19 @@ function renderUdalosti(){
   const box=document.createElement("div"); box.className="bg-gray-800 p-4 rounded mb-4";
   const h2=document.createElement("h2"); h2.className="text-xl font-bold mb-2"; h2.textContent="📈 Gólové události"; box.appendChild(h2);
 
-  goloveUdalosti.forEach(e=>{
+  goloveUdalosti.forEach((e,idx)=>{
     const div=document.createElement("div");
-    div.className=(e.typ==="g"?"bg-green-200":"bg-red-200")+" p-2 rounded text-sm mb-2 text-black";
+    div.className=(e.typ==="g"?"bg-green-200":"bg-red-200")+" p-2 rounded text-sm mb-2 text-black flex items-start justify-between gap-2";
     const strelec = e.strelec ? (" – "+cisloZJmena(hById(e.strelec)?.jmeno)) : (e.golman?(" – G:"+cisloZJmena(hById(e.golman)?.jmeno)):"");
     const A = e.asistenti?.length ? "(A: "+e.asistenti.map(id=>cisloZJmena(hById(id)?.jmeno)).join(", ")+")" : "";
     const P = e.plus?.length ? " +: "+e.plus.map(id=>cisloZJmena(hById(id)?.jmeno)).join(", ") : "";
     const M = e.minus?.length ? " −: "+e.minus.map(id=>cisloZJmena(hById(id)?.jmeno)).join(", ") : "";
-    div.innerHTML=`<strong>${e.tretina}. tř. ${e.cas}</strong>: ${e.typ==="g"?"Gól":"Obdržený gól"}${strelec} ${A} ${P} ${M}`;
+    const left=document.createElement("div");
+    left.innerHTML=`<strong>${e.tretina}. tř. ${e.cas}</strong>: ${e.typ==="g"?"Gól":"Obdržený gól"}${strelec} ${A} ${P} ${M}`;
+    const tools=document.createElement("div"); tools.className="flex gap-1";
+    const edit=document.createElement("button"); edit.textContent="✏️"; edit.className="px-2 py-1 rounded bg-gray-900 text-white"; edit.onclick=()=>editEvent(idx);
+    tools.appendChild(edit);
+    div.appendChild(left); div.appendChild(tools);
     box.appendChild(div);
   });
 
@@ -956,20 +986,30 @@ function exportSoupiska(){
   XLSX.utils.book_append_sheet(wb, ws, "Soupiska");
   XLSX.writeFile(wb, "soupiska.xlsx");
 }
+function goalieSVPercent(s){
+  const saves = Object.values(s.zasahy).reduce((a,b)=>a+b,0);
+  const against = Object.values(s.obdrzene).reduce((a,arr)=>a+arr.length,0);
+  const denom = saves + against;
+  if (!denom) return "";
+  return ((saves/denom)*100).toFixed(1)+"%";
+}
 function exportStatistiky(){
   const sum=(o)=>Object.values(o).reduce((a,b)=>a+(Array.isArray(b)?b.length:b),0);
   const data=hraci.map(h=>{
     const s=statistiky[h.id];
+    const isG = h.typ==="B";
+    const SV = isG ? goalieSVPercent(s) : "";
     return {
       Cislo: cisloZJmena(h.jmeno),
       Jmeno: jmenoBezCisla(h.jmeno),
       Typ: h.typ, Petka: h.petka||"",
       Aktivni: (h.active!==false)?"ano":"ne",
       Strely: sum(s.strely),
-      Goly:   sum(h.typ==="B"?s.obdrzene:s.goly),
+      Goly:   sum(isG?s.obdrzene:s.goly),
       Asistence: sum(s.asistence),
       Plus: sum(s.plus), Minus: sum(s.minus),
-      Zasahy: sum(s.zasahy), Obdrzene: sum(s.obdrzene), Tresty: sum(s.tresty)
+      Zasahy: sum(s.zasahy), Obdrzene: sum(s.obdrzene), Tresty: sum(s.tresty),
+      "SV%": SV
     };
   });
   const ws=XLSX.utils.json_to_sheet(data);
@@ -1034,22 +1074,52 @@ function ulozDoArchivu(){
   };
   const a = nactiArchiv(); a.unshift(entry); ulozArchiv(a);
 }
+
+function exportArchivXLSX(zapasy){
+  const rows = zapasy.map(e=>{
+    const m=e.meta||{}; return {
+      Datum: m.datum||"", Cas: m.cas||"", Misto: m.misto||"", Tym: m.tym||"",
+      Skore: m.score||"", SO: m.shootout||"", Soutez: m.soutez||"", Stitky: m.stitky||"",
+      Vytvoreno: new Date(e.ts).toLocaleString()
+    };
+  });
+  const ws=XLSX.utils.json_to_sheet(rows);
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Archiv");
+  XLSX.writeFile(wb, "archiv_export.xlsx");
+}
+
 function renderArchiv(container){
   const box=document.createElement("div"); box.className="p-3 bg-gray-900 rounded border border-gray-700 mt-3";
   const ttl=document.createElement("div"); ttl.className="font-bold mb-2"; ttl.textContent="Archiv zápasů"; box.appendChild(ttl);
 
-  const filter=document.createElement("div"); filter.className="flex flex-wrap gap-2 mb-2";
-  const inp=document.createElement("input"); inp.placeholder="Hledat (místo, soutěž, štítky)"; inp.className="px-2 py-1 rounded bg-gray-800 border border-gray-700 flex-1";
-  filter.appendChild(inp); box.appendChild(filter);
+  // Filtry: od–do + text
+  const filters=document.createElement("div"); filters.className="flex flex-wrap gap-2 mb-2 items-end";
+  const fFrom=document.createElement("input"); fFrom.type="date"; fFrom.className="px-2 py-1 rounded bg-gray-800 border border-gray-700";
+  const fTo=document.createElement("input"); fTo.type="date"; fTo.className="px-2 py-1 rounded bg-gray-800 border border-gray-700";
+  const fText=document.createElement("input"); fText.placeholder="Hledat (místo, soutěž, štítky)"; fText.className="px-2 py-1 rounded bg-gray-800 border border-gray-700 flex-1";
+  const bExport=document.createElement("button"); bExport.textContent="📤 Export vyfiltrovaných (.xlsx)"; bExport.className="px-3 py-1 rounded bg-green-700";
+  filters.appendChild(fFrom); filters.appendChild(fTo); filters.appendChild(fText); filters.appendChild(bExport);
+  box.appendChild(filters);
 
   const list=document.createElement("div"); list.className="flex flex-col gap-2";
+  const getFiltered=()=>{
+    const all=nactiArchiv();
+    const from = fFrom.value ? new Date(fFrom.value).getTime() : null;
+    const to   = fTo.value   ? (new Date(fTo.value).getTime()+24*3600*1000-1) : null;
+    const q=(fText.value||"").toLowerCase();
+    return all.filter(e=>{
+      const inDate = (!from || e.ts>=from) && (!to || e.ts<=to);
+      if(!inDate) return false;
+      const m=e.meta||{};
+      const hay = `${m.misto||""} ${m.soutez||""} ${m.stitky||""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  };
+  bExport.onclick=()=>{ const z=getFiltered(); if(!z.length){ alert("Žádné zápasy pro export po filtrování."); return; } exportArchivXLSX(z); };
+
   const renderList=()=>{
     list.innerHTML="";
-    const q=(inp.value||"").toLowerCase();
-    nactiArchiv().filter(e=>{
-      const m=e.meta||{}; const hay = `${m.misto||""} ${m.soutez||""} ${m.stitky||""}`.toLowerCase();
-      return hay.includes(q);
-    }).forEach(e=>{
+    getFiltered().forEach(e=>{
       const row=document.createElement("div"); row.className="flex flex-wrap items-center gap-2 bg-gray-800 border border-gray-700 rounded p-2";
       const when=new Date(e.ts).toLocaleString();
       const meta=e.meta||{};
@@ -1081,7 +1151,8 @@ function renderArchiv(container){
       list.appendChild(row);
     });
   };
-  inp.oninput=renderList; renderList();
+  fFrom.onchange=renderList; fTo.onchange=renderList; fText.oninput=renderList; renderList();
+
   container.appendChild(box); container.appendChild(list);
 }
 
