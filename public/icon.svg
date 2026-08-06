@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Dynamo statistiky">
+  <rect width="512" height="512" fill="#0b1220"/>
+  <!-- bezpečná zóna pro maskable ikonu: obsah drží uvnitř středních 80 % -->
+  <g stroke="#3b76c4" stroke-width="34" stroke-linecap="round" fill="none">
+    <path d="M170 330V182"/>
+    <path d="M342 330V182"/>
+    <path d="M170 256h172"/>
+  </g>
+  <circle cx="256" cy="368" r="30" fill="#e2e8f0"/>
+</svg>
