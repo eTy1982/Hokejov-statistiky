@@ -82,6 +82,29 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     return sorted.filter((r) => r.position === "B" || r.line === lineFilter);
   }, [roster, playerMap, lineFilter]);
 
+  /** Hráči, kteří v zápase něco mají. Takového nelze ze sestavy jen tak vyřadit,
+   *  jeho záznamy by zmizely z tabulky, ale dál by se počítaly do skóre. */
+  const playersWithEvents = useMemo(() => {
+    const ids = new Set<string>();
+    for (const e of events) {
+      if (e.deleted) continue;
+      if (e.playerId) ids.add(e.playerId);
+      if (e.goalieId) ids.add(e.goalieId);
+      for (const id of [...e.assists, ...e.onIcePlus, ...e.onIceMinus]) ids.add(id);
+    }
+    return ids;
+  }, [events]);
+
+  /** Do tabulky patří i ten, kdo v sestavě není, ale záznam má – jinak by se
+   *  jeho čísla tiše ztratila. */
+  const statsRoster = useMemo(() => {
+    const inRoster = new Set(roster.map((r) => r.playerId));
+    const extra: RosterEntry[] = [...playersWithEvents]
+      .filter((id) => !inRoster.has(id) && playerMap.has(id))
+      .map((id) => ({ playerId: id, line: 0, position: playerMap.get(id)?.position ?? "Ú" }));
+    return [...roster, ...extra];
+  }, [roster, playersWithEvents, playerMap]);
+
   const availableLines = useMemo(
     () => [...new Set(roster.filter((r) => r.position !== "B" && r.line > 0).map((r) => r.line))].sort(),
     [roster],
@@ -444,7 +467,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       </div>
 
       <StatsTable
-        roster={roster}
+        roster={statsRoster}
         players={playerMap}
         stats={byPlayer}
         onSelectPlayer={(playerId) => setDialog({ kind: "player", playerId })}
@@ -525,6 +548,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
           matchId={matchId}
           roster={roster}
           players={players}
+          lockedPlayerIds={playersWithEvents}
           onClose={() => setDialog(null)}
           onChanged={async () => {
             onChanged();
@@ -738,23 +762,32 @@ function LineupDialog({
   matchId,
   roster,
   players,
+  lockedPlayerIds,
   onClose,
   onChanged,
 }: {
   matchId: string;
   roster: RosterEntry[];
   players: Player[];
+  lockedPlayerIds: Set<string>;
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
   const [working, setWorking] = useState(false);
+  const [search, setSearch] = useState("");
   const inRoster = new Map(roster.map((r) => [r.playerId, r]));
 
-  const update = async (playerId: string, patch: Partial<RosterEntry>) => {
+  const shown = players.filter((p) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return `${p.fullName} ${p.jerseyNumber ?? ""}`.toLowerCase().includes(q);
+  });
+
+  const update = async (playerId: string, patch: Partial<RosterEntry> & { remove?: boolean }) => {
     setWorking(true);
     const current = inRoster.get(playerId);
     const player = players.find((p) => p.id === playerId);
-    if (patch.line === -1) {
+    if (patch.remove) {
       await removeRosterEntry(matchId, playerId);
     } else {
       await putRoster({
@@ -768,11 +801,25 @@ function LineupDialog({
     setWorking(false);
   };
 
+  const setAll = async (include: boolean) => {
+    setWorking(true);
+    for (const p of shown) {
+      const isIn = inRoster.has(p.id);
+      if (include && !isIn) {
+        await putRoster({ matchId, playerId: p.id, line: 0, position: p.position ?? "Ú" });
+      } else if (!include && isIn && !lockedPlayerIds.has(p.id)) {
+        await removeRosterEntry(matchId, p.id);
+      }
+    }
+    await onChanged();
+    setWorking(false);
+  };
+
   return (
     <Modal
       wide
       title="Sestava zápasu"
-      subtitle="Kdo nastoupil a v jaké pětce. Změna platí jen pro tento zápas."
+      subtitle={`Nastoupilo ${roster.length} z ${players.length} hráčů. Pětky platí jen pro tento zápas.`}
       onClose={onClose}
       footer={
         <button className="btn-primary" onClick={onClose}>
@@ -780,9 +827,25 @@ function LineupDialog({
         </button>
       }
     >
+      <div className="mb-3 flex flex-wrap gap-2">
+        <input
+          className="field flex-1"
+          placeholder="Hledat hráče…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button className="btn-ghost" disabled={working} onClick={() => void setAll(true)}>
+          Označit vše
+        </button>
+        <button className="btn-ghost" disabled={working} onClick={() => void setAll(false)}>
+          Odznačit vše
+        </button>
+      </div>
+
       <div className="space-y-1">
-        {players.map((p) => {
+        {shown.map((p) => {
           const entry = inRoster.get(p.id);
+          const locked = lockedPlayerIds.has(p.id);
           return (
             <div
               key={p.id}
@@ -795,12 +858,18 @@ function LineupDialog({
                   type="checkbox"
                   className="h-5 w-5 accent-[var(--color-ice-500)]"
                   checked={Boolean(entry)}
-                  disabled={working}
-                  onChange={(e) =>
-                    void update(p.id, e.target.checked ? { line: 0 } : { line: -1 })
-                  }
+                  disabled={working || (locked && Boolean(entry))}
+                  onChange={(e) => void update(p.id, e.target.checked ? {} : { remove: true })}
                 />
                 <span className="font-medium">{playerLabel(p)}</span>
+                {locked && entry && (
+                  <span
+                    className="chip bg-amber-500/15 text-amber-300"
+                    title="Hráč už má v tomto zápase záznam, proto ho nelze vyřadit. Smažte nejdřív jeho události."
+                  >
+                    má záznam
+                  </span>
+                )}
               </label>
 
               {entry && (
@@ -835,6 +904,9 @@ function LineupDialog({
             </div>
           );
         })}
+        {shown.length === 0 && (
+          <p className="py-6 text-center text-sm text-slate-500">Hledání nikoho nenašlo.</p>
+        )}
       </div>
     </Modal>
   );

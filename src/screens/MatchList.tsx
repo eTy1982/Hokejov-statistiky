@@ -73,21 +73,28 @@ export function MatchList({ players, onOpen, onChanged }: Props) {
     await putMatch(match);
 
     // Do soupisky zápasu se předvyplní všichni aktivní hráči; pětky se doplní
-    // podle posledního odehraného zápasu, ať se nemusí klikat od nuly.
+    // Sestava se přebírá z posledního zápasu včetně toho, KDO nastoupil – ne
+    // všichni ze soupisky. Kádr bývá 30 lidí, ale hraje jich patnáct a sestava
+    // se mezi zápasy mění málo, takže je rychlejší pár jmen doplnit než patnáct
+    // odklikávat. Bez předchozího zápasu se nabídnou všichni aktivní.
     const previous = matches[0];
     const previousRoster = previous
       ? await (await db()).getAllFromIndex("roster", "byMatch", previous.id)
       : [];
-    const lineOf = new Map(previousRoster.map((r) => [r.playerId, r.line]));
+    const activeById = new Map(players.filter((p) => p.isActive).map((p) => [p.id, p]));
 
-    for (const p of players) {
-      if (!p.isActive) continue;
-      await putRoster({
-        matchId: id,
-        playerId: p.id,
-        line: lineOf.get(p.id) ?? 0,
-        position: p.position ?? "Ú",
-      });
+    const seed = previousRoster.length
+      ? previousRoster
+          .filter((r) => activeById.has(r.playerId))
+          .map((r) => ({ playerId: r.playerId, line: r.line, position: r.position }))
+      : [...activeById.values()].map((p) => ({
+          playerId: p.id,
+          line: 0,
+          position: p.position ?? ("Ú" as const),
+        }));
+
+    for (const entry of seed) {
+      await putRoster({ matchId: id, ...entry });
     }
 
     onChanged();
