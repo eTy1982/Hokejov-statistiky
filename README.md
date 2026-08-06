@@ -73,11 +73,13 @@ kódu patří – data chrání RLS, ne utajení klíče. Jde přebít proměnn�
 
 ## Nasazení
 
-Push do `main` spustí [workflow](.github/workflows/deploy.yml), který zkontroluje typy,
-pustí testy a nasadí na GitHub Pages. Jednorázově je potřeba v repozitáři zapnout
-**Settings → Pages → Source: GitHub Actions**.
+Nasazuje **Netlify** z větve `main` podle [`netlify.toml`](netlify.toml) – stejně jako
+skladovou aplikaci. Push do `main` spustí build automaticky.
 
-Na tabletu pak stačí web otevřít a dát *Přidat na plochu* – aplikace se nainstaluje
+Souběžně běží [kontrola v GitHub Actions](.github/workflows/ci.yml) (typy, testy, build),
+aby se rozbitý kód poznal i bez čekání na Netlify.
+
+Na tabletu stačí web otevřít a dát *Přidat na plochu* – aplikace se nainstaluje
 jako PWA a funguje offline.
 
 ## Původní verze

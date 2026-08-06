@@ -3,8 +3,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 
-// GitHub Pages servíruje repo na /<nazev-repa>/, lokálně chceme /.
-const base = process.env.GITHUB_ACTIONS ? "/Hokejov-statistiky/" : "/";
+// Netlify servíruje aplikaci z kořene domény, stejně jako skladovou aplikaci.
+const base = "/";
 
 export default defineConfig({
   base,

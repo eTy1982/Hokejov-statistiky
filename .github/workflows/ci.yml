@@ -1,0 +1,32 @@
+name: Kontrola
+
+# Nasazení obstarává Netlify (viz netlify.toml). Tenhle běh jen hlídá, že se
+# na main nedostane rozbitý kód – Netlify build spadne až po nasazení commitu.
+on:
+  push:
+    branches: [main, modernizace]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  kontrola:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalace závislostí
+        run: npm ci
+
+      - name: Kontrola typů
+        run: npx tsc --noEmit
+
+      - name: Testy
+        run: npm test
+
+      - name: Build
+        run: npm run build
