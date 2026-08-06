@@ -1,8 +1,8 @@
 /** Exporty do XLSX a CSV. */
 import * as XLSX from "xlsx";
 import { computeStats, savePercentage, scoreboard, sumCounts, sumTimes } from "./stats";
-import { PERIODS, type Match, type MatchEvent, type Player, type RosterEntry } from "./types";
-import { PERIOD_SHORT, playerLabel, sortRoster } from "./format";
+import { PERIODS, type Match, type MatchEvent, type Participant } from "./types";
+import { PERIOD_SHORT, playerLabel } from "./format";
 
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -23,12 +23,10 @@ const safeName = (value: string) => value.replace(/[^\p{L}\p{N}._-]+/gu, "_");
 export function exportMatchStatsXlsx(
   match: Match,
   events: MatchEvent[],
-  roster: RosterEntry[],
-  players: Map<string, Player>,
+  participants: Participant[],
 ): void {
   const { byPlayer, totals } = computeStats(events, match.shootoutWinner);
   const score = scoreboard(totals, match.homeAway);
-  const ordered = sortRoster(roster, players);
 
   const header = [
     ["Zápas", `${match.homeAway === "home" ? "Dynamo" : match.opponent ?? "Soupeř"} vs ${match.homeAway === "home" ? match.opponent ?? "Soupeř" : "Dynamo"}`],
@@ -41,19 +39,19 @@ export function exportMatchStatsXlsx(
     [],
   ];
 
-  const rows = ordered.map((entry) => {
-    const player = players.get(entry.playerId);
-    const s = byPlayer[entry.playerId];
+  const rows = participants.map((entry) => {
+    const s = byPlayer[entry.id];
     const goals = s ? sumTimes(s.goals) : 0;
     const assists = s ? sumCounts(s.assists) : 0;
     const isGoalie = entry.position === "B";
     const sv = s && isGoalie ? savePercentage(s) : null;
 
     const record: Record<string, string | number> = {
-      Číslo: player?.jerseyNumber ?? "",
-      Jméno: player?.fullName ?? "",
+      Číslo: entry.jerseyNumber ?? "",
+      Jméno: entry.fullName,
       Pozice: entry.position,
       Pětka: entry.line || "",
+      Hostující: entry.isGuest ? "ano" : "",
     };
     for (const p of PERIODS) {
       record[`Střely ${PERIOD_SHORT[p]}`] = s?.shots[p] ?? 0;
@@ -134,10 +132,10 @@ function toCsv(headers: string[], rows: Record<string, unknown>[]): string {
 export function exportEventsCsv(
   match: Match,
   events: MatchEvent[],
-  players: Map<string, Player>,
+  participants: Map<string, Participant>,
 ): void {
-  const label = (id: string | null) => (id ? playerLabel(players.get(id)) : "");
-  const number = (id: string | null) => (id ? (players.get(id)?.jerseyNumber ?? "") : "");
+  const label = (id: string | null) => (id ? playerLabel(participants.get(id)) : "");
+  const number = (id: string | null) => (id ? (participants.get(id)?.jerseyNumber ?? "") : "");
 
   const rows = events
     .filter((e) => !e.deleted)

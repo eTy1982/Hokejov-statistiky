@@ -5,13 +5,11 @@
  *  na server (viz sync.ts).
  */
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Match, MatchEvent, Player, RosterEntry } from "./types";
+import type { GuestPlayer, Match, MatchEvent, Player, RosterEntry } from "./types";
 
 export type Dirty<T> = T & { dirty: 0 | 1 };
 
-export interface StoredRoster extends RosterEntry {
-  matchId: string;
-}
+export type StoredRoster = RosterEntry;
 
 interface StatsDB extends DBSchema {
   matches: {
@@ -25,13 +23,18 @@ interface StatsDB extends DBSchema {
     indexes: { byMatch: string; byDirty: number };
   };
   roster: {
-    key: [string, string]; // [matchId, playerId]
+    key: string; // match_roster.id
     value: Dirty<StoredRoster>;
     indexes: { byMatch: string; byDirty: number };
   };
   players: {
     key: string;
     value: Player;
+  };
+  guests: {
+    key: string;
+    value: Dirty<GuestPlayer>;
+    indexes: { byDirty: number };
   };
   meta: {
     key: string;
@@ -42,22 +45,39 @@ interface StatsDB extends DBSchema {
 let dbPromise: Promise<IDBPDatabase<StatsDB>> | null = null;
 
 export function db(): Promise<IDBPDatabase<StatsDB>> {
-  dbPromise ??= openDB<StatsDB>("dynamo-stats", 1, {
-    upgrade(database) {
-      const matches = database.createObjectStore("matches", { keyPath: "id" });
-      matches.createIndex("byDate", "matchDate");
-      matches.createIndex("byDirty", "dirty");
+  dbPromise ??= openDB<StatsDB>("dynamo-stats", 2, {
+    upgrade(database, oldVersion, _newVersion, tx) {
+      if (oldVersion < 1) {
+        const matches = database.createObjectStore("matches", { keyPath: "id" });
+        matches.createIndex("byDate", "matchDate");
+        matches.createIndex("byDirty", "dirty");
 
-      const events = database.createObjectStore("events", { keyPath: "clientId" });
-      events.createIndex("byMatch", "matchId");
-      events.createIndex("byDirty", "dirty");
+        const events = database.createObjectStore("events", { keyPath: "clientId" });
+        events.createIndex("byMatch", "matchId");
+        events.createIndex("byDirty", "dirty");
 
-      const roster = database.createObjectStore("roster", { keyPath: ["matchId", "playerId"] });
-      roster.createIndex("byMatch", "matchId");
-      roster.createIndex("byDirty", "dirty");
+        database.createObjectStore("players", { keyPath: "id" });
+        database.createObjectStore("meta");
+      }
 
-      database.createObjectStore("players", { keyPath: "id" });
-      database.createObjectStore("meta");
+      if (oldVersion < 2) {
+        // Sestava dostala vlastní klíč (host nemá player_id), což u IndexedDB
+        // znamená úložiště založit znovu. Data se dotáhnou ze serveru – proto
+        // se zároveň zahazuje značka poslední synchronizace.
+        if (database.objectStoreNames.contains("roster")) {
+          database.deleteObjectStore("roster");
+        }
+        const roster = database.createObjectStore("roster", { keyPath: "id" });
+        roster.createIndex("byMatch", "matchId");
+        roster.createIndex("byDirty", "dirty");
+
+        const guests = database.createObjectStore("guests", { keyPath: "id" });
+        guests.createIndex("byDirty", "dirty");
+
+        if (database.objectStoreNames.contains("meta")) {
+          void tx.objectStore("meta").delete("lastPullAt");
+        }
+      }
     },
   });
   return dbPromise;
@@ -154,8 +174,30 @@ export async function rosterOfMatch(matchId: string): Promise<RosterEntry[]> {
   return (await db()).getAllFromIndex("roster", "byMatch", matchId);
 }
 
-export async function removeRosterEntry(matchId: string, playerId: string): Promise<void> {
-  await (await db()).delete("roster", [matchId, playerId]);
+export async function removeRosterEntry(rosterId: string): Promise<void> {
+  const database = await db();
+  await database.delete("roster", rosterId);
+  // Aby řádek zmizel i na ostatních zařízeních, ne jen lokálně.
+  const removed = (await getMeta<string[]>("removedRoster")) ?? [];
+  await setMeta("removedRoster", [...new Set([...removed, rosterId])]);
+}
+
+/* -------------------------------------------------- hostující hráči */
+
+export async function putGuest(guest: GuestPlayer, dirty = true): Promise<void> {
+  await (await db()).put("guests", { ...guest, dirty: dirty ? 1 : 0 });
+}
+
+export async function mergeServerGuest(guest: GuestPlayer): Promise<void> {
+  const database = await db();
+  const local = await database.get("guests", guest.id);
+  if (local?.dirty === 1 && local.updatedAt >= guest.updatedAt) return;
+  await database.put("guests", { ...guest, dirty: 0 });
+}
+
+export async function allGuests(): Promise<GuestPlayer[]> {
+  const list = await (await db()).getAll("guests");
+  return list.sort((a, b) => a.fullName.localeCompare(b.fullName, "cs"));
 }
 
 /* ---------------------------------------------------------------- hráči */
@@ -173,27 +215,27 @@ export async function cachedPlayers(): Promise<Player[]> {
 
 /* ------------------------------------------------------------ pomocné */
 
-export async function pendingCounts(): Promise<{ matches: number; events: number; roster: number }> {
-  const database = await db();
-  const [matches, events, roster] = await Promise.all([
-    database.getAllFromIndex("matches", "byDirty", 1),
-    database.getAllFromIndex("events", "byDirty", 1),
-    database.getAllFromIndex("roster", "byDirty", 1),
-  ]);
-  return { matches: matches.length, events: events.length, roster: roster.length };
+export async function pendingCounts(): Promise<number> {
+  const { matches, events, roster, guests } = await dirtyRecords();
+  const removed = (await getMeta<string[]>("removedRoster")) ?? [];
+  return matches.length + events.length + roster.length + guests.length + removed.length;
 }
 
 export async function dirtyRecords() {
   const database = await db();
-  const [matches, events, roster] = await Promise.all([
+  const [matches, events, roster, guests] = await Promise.all([
     database.getAllFromIndex("matches", "byDirty", 1),
     database.getAllFromIndex("events", "byDirty", 1),
     database.getAllFromIndex("roster", "byDirty", 1),
+    database.getAllFromIndex("guests", "byDirty", 1),
   ]);
-  return { matches, events, roster };
+  return { matches, events, roster, guests };
 }
 
-export async function markClean(kind: "matches" | "events" | "roster", keys: unknown[]): Promise<void> {
+export async function markClean(
+  kind: "matches" | "events" | "roster" | "guests",
+  keys: unknown[],
+): Promise<void> {
   const database = await db();
   const tx = database.transaction(kind, "readwrite");
   for (const key of keys) {

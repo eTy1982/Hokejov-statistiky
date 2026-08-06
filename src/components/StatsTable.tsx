@@ -1,4 +1,4 @@
-import { PERIODS, type Player, type RosterEntry } from "../lib/types";
+import { PERIODS, type Participant } from "../lib/types";
 import {
   emptyPlayerStats,
   savePercentage,
@@ -6,11 +6,10 @@ import {
   sumTimes,
   type StatsByPlayer,
 } from "../lib/stats";
-import { playerLabel, sortRoster } from "../lib/format";
+import { playerLabel } from "../lib/format";
 
 interface Props {
-  roster: RosterEntry[];
-  players: Map<string, Player>;
+  participants: Participant[];
   stats: StatsByPlayer;
   onSelectPlayer: (playerId: string) => void;
 }
@@ -19,16 +18,15 @@ interface Props {
  *
  *  Brankáři mají vlastní sekci – míchat jejich obdržené góly do stejného sloupce
  *  jako střely hráčů (co dělala předchozí verze) dávalo nesmyslný součet. */
-export function StatsTable({ roster, players, stats, onSelectPlayer }: Props) {
-  const ordered = sortRoster(roster, players);
-  const skaters = ordered.filter((r) => r.position !== "B");
-  const goalies = ordered.filter((r) => r.position === "B");
+export function StatsTable({ participants, stats, onSelectPlayer }: Props) {
+  const skaters = participants.filter((r) => r.position !== "B");
+  const goalies = participants.filter((r) => r.position === "B");
 
   const statsOf = (id: string) => stats[id] ?? emptyPlayerStats();
 
   const totals = skaters.reduce(
     (acc, entry) => {
-      const s = statsOf(entry.playerId);
+      const s = statsOf(entry.id);
       for (const p of PERIODS) acc.shots[p] = (acc.shots[p] ?? 0) + (s.shots[p] ?? 0);
       acc.goals += sumTimes(s.goals);
       acc.assists += sumCounts(s.assists);
@@ -73,18 +71,20 @@ export function StatsTable({ roster, players, stats, onSelectPlayer }: Props) {
             </thead>
             <tbody>
               {skaters.map((entry) => {
-                const player = players.get(entry.playerId);
-                const s = statsOf(entry.playerId);
+                const s = statsOf(entry.id);
                 const goals = sumTimes(s.goals);
                 const assists = sumCounts(s.assists);
                 return (
                   <tr
-                    key={entry.playerId}
+                    key={entry.rosterId}
                     className="cursor-pointer border-t border-white/5 hover:bg-white/5"
-                    onClick={() => onSelectPlayer(entry.playerId)}
+                    onClick={() => onSelectPlayer(entry.id)}
                   >
                     <td className="px-3 py-2 font-medium whitespace-nowrap">
-                      {playerLabel(player)}
+                      {playerLabel(entry)}
+                      {entry.isGuest && (
+                        <span className="chip ml-2 bg-white/10 text-slate-400">host</span>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-center text-slate-400">{entry.line || "—"}</td>
                     {PERIODS.map((p) => (
@@ -158,17 +158,19 @@ export function StatsTable({ roster, players, stats, onSelectPlayer }: Props) {
               </thead>
               <tbody>
                 {goalies.map((entry) => {
-                  const player = players.get(entry.playerId);
-                  const s = statsOf(entry.playerId);
+                  const s = statsOf(entry.id);
                   const sv = savePercentage(s);
                   return (
                     <tr
-                      key={entry.playerId}
+                      key={entry.rosterId}
                       className="cursor-pointer border-t border-white/5 hover:bg-white/5"
-                      onClick={() => onSelectPlayer(entry.playerId)}
+                      onClick={() => onSelectPlayer(entry.id)}
                     >
                       <td className="px-3 py-2 font-medium whitespace-nowrap">
-                        {playerLabel(player)}
+                        {playerLabel(entry)}
+                        {entry.isGuest && (
+                          <span className="chip ml-2 bg-white/10 text-slate-400">host</span>
+                        )}
                       </td>
                       {PERIODS.map((p) => (
                         <td key={p} className="px-2 py-2 text-center tabular-nums">

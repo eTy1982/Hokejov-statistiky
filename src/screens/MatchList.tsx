@@ -83,18 +83,28 @@ export function MatchList({ players, onOpen, onChanged }: Props) {
       : [];
     const activeById = new Map(players.filter((p) => p.isActive).map((p) => [p.id, p]));
 
+    // Hostující hráči se do dalšího zápasu nepřebírají – výpomoc je jednorázová
+    // a stálou součástí kádru se z ní stát nemá.
     const seed = previousRoster.length
       ? previousRoster
-          .filter((r) => activeById.has(r.playerId))
-          .map((r) => ({ playerId: r.playerId, line: r.line, position: r.position }))
+          .filter((r) => r.playerId !== null && activeById.has(r.playerId))
+          .map((r) => ({
+            playerId: r.playerId,
+            guestId: null,
+            jerseyNumber: r.jerseyNumber,
+            line: r.line,
+            position: r.position,
+          }))
       : [...activeById.values()].map((p) => ({
           playerId: p.id,
+          guestId: null,
+          jerseyNumber: p.jerseyNumber,
           line: 0,
           position: p.position ?? ("Ú" as const),
         }));
 
     for (const entry of seed) {
-      await putRoster({ matchId: id, ...entry });
+      await putRoster({ id: crypto.randomUUID(), matchId: id, ...entry });
     }
 
     onChanged();

@@ -10,15 +10,17 @@
 import { supabase } from "./supabase";
 import {
   cachePlayers,
+  db,
   dirtyRecords,
   getMeta,
   markClean,
   mergeServerEvent,
+  mergeServerGuest,
   mergeServerMatch,
   putRoster,
   setMeta,
 } from "./db";
-import type { Match, MatchEvent, Player, Position, SoResult } from "./types";
+import type { GuestPlayer, Match, MatchEvent, Player, Position, SoResult } from "./types";
 
 const LAST_PULL = "lastPullAt";
 
@@ -161,6 +163,40 @@ const rowToPlayer = (r: PlayerRow): Player => ({
   isActive: r.is_active,
 });
 
+type GuestRow = {
+  id: string;
+  full_name: string;
+  note: string | null;
+  is_active: boolean;
+  updated_at: string;
+};
+
+const guestToRow = (g: GuestPlayer): GuestRow => ({
+  id: g.id,
+  full_name: g.fullName,
+  note: g.note,
+  is_active: g.isActive,
+  updated_at: g.updatedAt,
+});
+
+const rowToGuest = (r: GuestRow): GuestPlayer => ({
+  id: r.id,
+  fullName: r.full_name,
+  note: r.note,
+  isActive: r.is_active,
+  updatedAt: r.updated_at,
+});
+
+type RosterRow = {
+  id: string;
+  match_id: string;
+  player_id: string | null;
+  guest_id: string | null;
+  jersey_number: number | null;
+  line: number;
+  position: Position;
+};
+
 /* ------------------------------------------------------------ vlastní sync */
 
 async function isSignedIn(): Promise<boolean> {
@@ -168,10 +204,18 @@ async function isSignedIn(): Promise<boolean> {
   return Boolean(data.session);
 }
 
-/** Odešle vše rozpracované. Pořadí je dané cizími klíči: zápas → soupiska → události. */
+/** Odešle vše rozpracované.
+ *  Pořadí je dané cizími klíči: host → zápas → soupiska → události. */
 async function push(): Promise<number> {
-  const { matches, events, roster } = await dirtyRecords();
+  const { matches, events, roster, guests } = await dirtyRecords();
   let pushed = 0;
+
+  if (guests.length) {
+    const { error } = await supabase.from("guest_players").upsert(guests.map(guestToRow));
+    if (error) throw new Error(`hostující hráči: ${error.message}`);
+    await markClean("guests", guests.map((g) => g.id));
+    pushed += guests.length;
+  }
 
   if (matches.length) {
     const { error } = await supabase.from("matches").upsert(matches.map(matchToRow));
@@ -180,16 +224,28 @@ async function push(): Promise<number> {
     pushed += matches.length;
   }
 
+  // Vyřazení ze sestavy se musí propsat i na ostatní zařízení.
+  const removedRoster = (await getMeta<string[]>("removedRoster")) ?? [];
+  if (removedRoster.length) {
+    const { error } = await supabase.from("match_roster").delete().in("id", removedRoster);
+    if (error) throw new Error(`vyřazení ze sestavy: ${error.message}`);
+    await setMeta("removedRoster", []);
+    pushed += removedRoster.length;
+  }
+
   if (roster.length) {
-    const rows = roster.map((r) => ({
+    const rows: RosterRow[] = roster.map((r) => ({
+      id: r.id,
       match_id: r.matchId,
       player_id: r.playerId,
+      guest_id: r.guestId,
+      jersey_number: r.jerseyNumber,
       line: r.line,
       position: r.position,
     }));
-    const { error } = await supabase.from("match_roster").upsert(rows, { onConflict: "match_id,player_id" });
+    const { error } = await supabase.from("match_roster").upsert(rows);
     if (error) throw new Error(`soupiska: ${error.message}`);
-    await markClean("roster", roster.map((r) => [r.matchId, r.playerId]));
+    await markClean("roster", roster.map((r) => r.id));
     pushed += roster.length;
   }
 
@@ -235,6 +291,16 @@ async function pull(): Promise<number> {
     pulled += 1;
   }
 
+  const { data: guestRows, error: guestErr } = await supabase
+    .from("guest_players")
+    .select("*")
+    .gt("updated_at", since);
+  if (guestErr) throw new Error(`stažení hostujících: ${guestErr.message}`);
+  for (const row of (guestRows ?? []) as GuestRow[]) {
+    await mergeServerGuest(rowToGuest(row));
+    pulled += 1;
+  }
+
   // Soupiska nemá vlastní updated_at, tahá se pro zápasy, které se právě změnily.
   const changedMatchIds = (matchRows ?? []).map((m) => (m as MatchRow).id);
   if (changedMatchIds.length) {
@@ -243,16 +309,34 @@ async function pull(): Promise<number> {
       .select("*")
       .in("match_id", changedMatchIds);
     if (rosterErr) throw new Error(`stažení soupisky: ${rosterErr.message}`);
-    for (const r of rosterRows ?? []) {
+
+    const fromServer = (rosterRows ?? []) as RosterRow[];
+    for (const r of fromServer) {
       await putRoster(
         {
-          matchId: r.match_id as string,
-          playerId: r.player_id as string,
-          line: r.line as number,
-          position: r.position as Position,
+          id: r.id,
+          matchId: r.match_id,
+          playerId: r.player_id,
+          guestId: r.guest_id,
+          jerseyNumber: r.jersey_number,
+          line: r.line,
+          position: r.position,
         },
         false,
       );
+    }
+
+    // Co na serveru není, bylo jinde vyřazeno – smazat i lokálně, ale neztratit
+    // vlastní neodeslané změny.
+    const database = await db();
+    const serverIds = new Set(fromServer.map((r) => r.id));
+    for (const matchId of changedMatchIds) {
+      const local = await database.getAllFromIndex("roster", "byMatch", matchId);
+      for (const entry of local) {
+        if (!serverIds.has(entry.id) && entry.dirty === 0) {
+          await database.delete("roster", entry.id);
+        }
+      }
     }
   }
 

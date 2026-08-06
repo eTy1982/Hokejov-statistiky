@@ -13,8 +13,7 @@ export function useSyncEngine(enabled: boolean) {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   const refreshPending = useCallback(async () => {
-    const counts = await pendingCounts();
-    setPending(counts.matches + counts.events + counts.roster);
+    setPending(await pendingCounts());
   }, []);
 
   const run = useCallback(async () => {

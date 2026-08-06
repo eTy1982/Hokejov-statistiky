@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Modal } from "./Modal";
 import { TimeInput } from "./TimeInput";
-import { lineColor, normalizeClock, playerNumber, sortRoster, PERIOD_LABEL } from "../lib/format";
-import type { MatchEvent, Player, RosterEntry } from "../lib/types";
+import { lineColor, normalizeClock, playerNumber, PERIOD_LABEL } from "../lib/format";
+import type { MatchEvent, Participant } from "../lib/types";
 
 type Mode = "for" | "against";
 type Tab = "shooter" | "assist" | "plus" | "goalie" | "minus" | "clock";
@@ -19,8 +19,7 @@ export interface GoalDraft {
 interface Props {
   mode: Mode;
   period: string;
-  roster: RosterEntry[];
-  players: Map<string, Player>;
+  participants: Participant[];
   activeGoalieId: string | null;
   /** Vyplněno při editaci existující události. */
   editing?: MatchEvent | null;
@@ -31,8 +30,7 @@ interface Props {
 export function GoalDialog({
   mode,
   period,
-  roster,
-  players,
+  participants,
   activeGoalieId,
   editing,
   onSave,
@@ -50,8 +48,6 @@ export function GoalDialog({
   const [minus, setMinus] = useState<string[]>(editing?.onIceMinus ?? []);
   const [tab, setTab] = useState<Tab>(mode === "for" ? "shooter" : "goalie");
   const [error, setError] = useState<string | null>(null);
-
-  const ordered = useMemo(() => sortRoster(roster, players), [roster, players]);
 
   const toggle = (list: string[], id: string, limit?: number): string[] => {
     if (list.includes(id)) return list.filter((x) => x !== id);
@@ -72,8 +68,8 @@ export function GoalDialog({
     return { ring: "" };
   };
 
-  const handleTile = (entry: RosterEntry) => {
-    const id = entry.playerId;
+  const handleTile = (entry: Participant) => {
+    const id = entry.id;
     setError(null);
     if (mode === "for") {
       if (tab === "shooter") {
@@ -191,18 +187,20 @@ export function GoalDialog({
         <TimeInput value={clock} onChange={setClock} />
       ) : (
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8">
-          {ordered.map((entry) => {
-            const player = players.get(entry.playerId);
-            if (!player) return null;
-            const { ring, badge } = selectedFor(entry.playerId);
+          {participants.map((entry) => {
+            const { ring, badge } = selectedFor(entry.id);
             return (
               <button
-                key={entry.playerId}
+                key={entry.rosterId}
+                title={entry.fullName}
                 className={`tap-target relative rounded-xl border-2 py-3 font-bold text-white transition active:scale-95
                             ${lineColor(entry.line, entry.position === "B")} ${ring}`}
                 onClick={() => handleTile(entry)}
               >
-                <span className="text-xl tabular-nums">{playerNumber(player)}</span>
+                <span className="text-xl tabular-nums">{playerNumber(entry)}</span>
+                {entry.isGuest && (
+                  <span className="absolute top-0.5 left-1 text-[9px] opacity-70">H</span>
+                )}
                 {badge && (
                   <span className="absolute -top-1.5 -right-1.5 rounded-full bg-black px-1.5 py-0.5 text-[10px]">
                     {badge}

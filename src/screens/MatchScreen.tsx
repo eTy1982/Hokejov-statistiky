@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  allGuests,
   eventsOfMatch,
   getMatch,
   nextSeq,
   putEvent,
   putMatch,
-  putRoster,
-  removeRosterEntry,
   rosterOfMatch,
   softDeleteEvent,
 } from "../lib/db";
 import { computeStats, scoreboard, sumCounts, sumTimes } from "../lib/stats";
-import { makeEvent, PERIODS, type Match, type MatchEvent, type Period, type Player, type RosterEntry, type Side, type SoResult } from "../lib/types";
-import { PERIOD_SHORT, lineColor, normalizeClock, playerLabel, playerNumber, sortRoster } from "../lib/format";
+import { makeEvent, PERIODS, type GuestPlayer, type Match, type MatchEvent, type Participant, type Period, type Player, type RosterEntry, type Side, type SoResult } from "../lib/types";
+import { PERIOD_SHORT, buildParticipants, lineColor, normalizeClock, playerLabel, playerNumber } from "../lib/format";
 import { PlayerTile } from "../components/PlayerTile";
 import { GoalDialog, type GoalDraft } from "../components/GoalDialog";
 import { ShootoutDialog } from "../components/ShootoutDialog";
+import { LineupDialog } from "../components/LineupDialog";
 import { StatsTable } from "../components/StatsTable";
 import { Modal } from "../components/Modal";
 import { TimeInput } from "../components/TimeInput";
@@ -41,6 +41,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
   const [match, setMatch] = useState<Match | null>(null);
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
+  const [guests, setGuests] = useState<GuestPlayer[]>([]);
   const [period, setPeriod] = useState<Period>("1");
   const [lineFilter, setLineFilter] = useState(0);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -51,14 +52,16 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
   const playerMap = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
 
   const reload = useCallback(async () => {
-    const [m, e, r] = await Promise.all([
+    const [m, e, r, g] = await Promise.all([
       getMatch(matchId),
       eventsOfMatch(matchId),
       rosterOfMatch(matchId),
+      allGuests(),
     ]);
     setMatch(m ?? null);
     setEvents(e);
     setRoster(r);
+    setGuests(g);
   }, [matchId]);
 
   useEffect(() => {
@@ -76,11 +79,22 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     [totals, match?.homeAway],
   );
 
-  const visibleRoster = useMemo(() => {
-    const sorted = sortRoster(roster, playerMap);
-    if (lineFilter === 0) return sorted;
-    return sorted.filter((r) => r.position === "B" || r.line === lineFilter);
-  }, [roster, playerMap, lineFilter]);
+  const guestMap = useMemo(() => new Map(guests.map((g) => [g.id, g])), [guests]);
+
+  /** Kmenoví i hostující hráči sjednocení do jednoho seznamu účastníků zápasu. */
+  const participants = useMemo(
+    () => buildParticipants(roster, playerMap, guestMap),
+    [roster, playerMap, guestMap],
+  );
+  const participantMap = useMemo(
+    () => new Map(participants.map((p) => [p.id, p])),
+    [participants],
+  );
+
+  const visibleParticipants = useMemo(() => {
+    if (lineFilter === 0) return participants;
+    return participants.filter((p) => p.position === "B" || p.line === lineFilter);
+  }, [participants, lineFilter]);
 
   /** Hráči, kteří v zápase něco mají. Takového nelze ze sestavy jen tak vyřadit,
    *  jeho záznamy by zmizely z tabulky, ale dál by se počítaly do skóre. */
@@ -97,17 +111,30 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
 
   /** Do tabulky patří i ten, kdo v sestavě není, ale záznam má – jinak by se
    *  jeho čísla tiše ztratila. */
-  const statsRoster = useMemo(() => {
-    const inRoster = new Set(roster.map((r) => r.playerId));
-    const extra: RosterEntry[] = [...playersWithEvents]
-      .filter((id) => !inRoster.has(id) && playerMap.has(id))
-      .map((id) => ({ playerId: id, line: 0, position: playerMap.get(id)?.position ?? "Ú" }));
-    return [...roster, ...extra];
-  }, [roster, playersWithEvents, playerMap]);
+  const statsParticipants = useMemo(() => {
+    const known = new Set(participants.map((p) => p.id));
+    const extra: Participant[] = [...playersWithEvents]
+      .filter((id) => !known.has(id))
+      .map((id) => {
+        const player = playerMap.get(id);
+        const guest = guestMap.get(id);
+        return {
+          rosterId: `mimo-${id}`,
+          id,
+          fullName: player?.fullName ?? guest?.fullName ?? "Neznámý hráč",
+          jerseyNumber: player?.jerseyNumber ?? null,
+          position: player?.position ?? ("Ú" as const),
+          line: 0,
+          isGuest: Boolean(guest),
+        };
+      });
+    return [...participants, ...extra];
+  }, [participants, playersWithEvents, playerMap, guestMap]);
 
   const availableLines = useMemo(
-    () => [...new Set(roster.filter((r) => r.position !== "B" && r.line > 0).map((r) => r.line))].sort(),
-    [roster],
+    () =>
+      [...new Set(participants.filter((p) => p.position !== "B" && p.line > 0).map((p) => p.line))].sort(),
+    [participants],
   );
 
   const liveEventsList = useMemo(
@@ -157,9 +184,9 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     await removeEvent(last.clientId);
   }, [liveEventsList, removeEvent]);
 
-  const onTapPlayer = (entry: RosterEntry) => {
-    if (entry.position === "B") void addEvent({ type: "save", goalieId: entry.playerId });
-    else void addEvent({ type: "shot", playerId: entry.playerId });
+  const onTapPlayer = (entry: Participant) => {
+    if (entry.position === "B") void addEvent({ type: "save", goalieId: entry.id });
+    else void addEvent({ type: "shot", playerId: entry.id });
   };
 
   const saveGoal = async (mode: "for" | "against", draft: GoalDraft, editing: MatchEvent | null) => {
@@ -259,7 +286,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
               className="btn-ghost"
               onClick={() =>
                 void import("../lib/exports").then((m) =>
-                  m.exportMatchStatsXlsx(match, events, roster, playerMap),
+                  m.exportMatchStatsXlsx(match, events, statsParticipants),
                 )
               }
             >
@@ -269,7 +296,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
               className="btn-ghost"
               onClick={() =>
                 void import("../lib/exports").then((m) =>
-                  m.exportEventsCsv(match, events, playerMap),
+                  m.exportEventsCsv(match, events, participantMap),
                 )
               }
             >
@@ -364,11 +391,11 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
               }}
             >
               <option value="">— nevybrán —</option>
-              {roster
-                .filter((r) => r.position === "B")
-                .map((r) => (
-                  <option key={r.playerId} value={r.playerId}>
-                    {playerLabel(playerMap.get(r.playerId))}
+              {participants
+                .filter((p) => p.position === "B")
+                .map((p) => (
+                  <option key={p.rosterId} value={p.id}>
+                    {playerLabel(p)}
                   </option>
                 ))}
             </select>
@@ -378,22 +405,18 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
 
       {/* -------------------------------------------------- dlaždice */}
       <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
-        {visibleRoster.map((entry) => {
-          const player = playerMap.get(entry.playerId);
-          if (!player) return null;
-          const s = byPlayer[entry.playerId];
+        {visibleParticipants.map((entry) => {
+          const s = byPlayer[entry.id];
           const isGoalie = entry.position === "B";
           return (
             <PlayerTile
-              key={entry.playerId}
-              player={player}
-              line={entry.line}
-              isGoalie={isGoalie}
+              key={entry.rosterId}
+              participant={entry}
               count={s ? (isGoalie ? sumCounts(s.saves) : sumCounts(s.shots)) : 0}
               disabled={locked}
-              highlighted={isGoalie && activeGoalieId === entry.playerId}
+              highlighted={isGoalie && activeGoalieId === entry.id}
               onTap={() => onTapPlayer(entry)}
-              onLongPress={() => setDialog({ kind: "penalty", playerId: entry.playerId })}
+              onLongPress={() => setDialog({ kind: "penalty", playerId: entry.id })}
             />
           );
         })}
@@ -467,8 +490,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       </div>
 
       <StatsTable
-        roster={statsRoster}
-        players={playerMap}
+        participants={statsParticipants}
         stats={byPlayer}
         onSelectPlayer={(playerId) => setDialog({ kind: "player", playerId })}
       />
@@ -493,8 +515,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
         <GoalDialog
           mode={dialog.mode}
           period={dialog.editing?.period ?? period}
-          roster={roster}
-          players={playerMap}
+          participants={participants}
           activeGoalieId={activeGoalieId}
           editing={dialog.editing}
           onClose={() => setDialog(null)}
@@ -520,8 +541,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
 
       {dialog?.kind === "shootout" && (
         <ShootoutDialog
-          roster={roster}
-          players={playerMap}
+          participants={participants}
           attempts={shootoutAttempts}
           activeGoalieId={activeGoalieId}
           shootoutWinner={match.shootoutWinner}
@@ -537,7 +557,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
 
       {dialog?.kind === "player" && (
         <PlayerDetail
-          player={playerMap.get(dialog.playerId)}
+          player={statsParticipants.find((p) => p.id === dialog.playerId)}
           stats={byPlayer[dialog.playerId]}
           onClose={() => setDialog(null)}
         />
@@ -548,6 +568,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
           matchId={matchId}
           roster={roster}
           players={players}
+          guests={guests}
           lockedPlayerIds={playersWithEvents}
           onClose={() => setDialog(null)}
           onChanged={async () => {
@@ -716,7 +737,7 @@ function PlayerDetail({
   stats,
   onClose,
 }: {
-  player: Player | undefined;
+  player: Participant | undefined;
   stats: ReturnType<typeof computeStats>["byPlayer"][string] | undefined;
   onClose: () => void;
 }) {
@@ -752,162 +773,6 @@ function PlayerDetail({
           {stats.soAttempts > 0 && row("Nájezdy", `${stats.soGoals}/${stats.soAttempts}`)}
         </div>
       )}
-    </Modal>
-  );
-}
-
-/* ----------------------------------------------------------- sestava */
-
-function LineupDialog({
-  matchId,
-  roster,
-  players,
-  lockedPlayerIds,
-  onClose,
-  onChanged,
-}: {
-  matchId: string;
-  roster: RosterEntry[];
-  players: Player[];
-  lockedPlayerIds: Set<string>;
-  onClose: () => void;
-  onChanged: () => Promise<void>;
-}) {
-  const [working, setWorking] = useState(false);
-  const [search, setSearch] = useState("");
-  const inRoster = new Map(roster.map((r) => [r.playerId, r]));
-
-  const shown = players.filter((p) => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return `${p.fullName} ${p.jerseyNumber ?? ""}`.toLowerCase().includes(q);
-  });
-
-  const update = async (playerId: string, patch: Partial<RosterEntry> & { remove?: boolean }) => {
-    setWorking(true);
-    const current = inRoster.get(playerId);
-    const player = players.find((p) => p.id === playerId);
-    if (patch.remove) {
-      await removeRosterEntry(matchId, playerId);
-    } else {
-      await putRoster({
-        matchId,
-        playerId,
-        line: patch.line ?? current?.line ?? 0,
-        position: patch.position ?? current?.position ?? player?.position ?? "Ú",
-      });
-    }
-    await onChanged();
-    setWorking(false);
-  };
-
-  const setAll = async (include: boolean) => {
-    setWorking(true);
-    for (const p of shown) {
-      const isIn = inRoster.has(p.id);
-      if (include && !isIn) {
-        await putRoster({ matchId, playerId: p.id, line: 0, position: p.position ?? "Ú" });
-      } else if (!include && isIn && !lockedPlayerIds.has(p.id)) {
-        await removeRosterEntry(matchId, p.id);
-      }
-    }
-    await onChanged();
-    setWorking(false);
-  };
-
-  return (
-    <Modal
-      wide
-      title="Sestava zápasu"
-      subtitle={`Nastoupilo ${roster.length} z ${players.length} hráčů. Pětky platí jen pro tento zápas.`}
-      onClose={onClose}
-      footer={
-        <button className="btn-primary" onClick={onClose}>
-          Hotovo
-        </button>
-      }
-    >
-      <div className="mb-3 flex flex-wrap gap-2">
-        <input
-          className="field flex-1"
-          placeholder="Hledat hráče…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <button className="btn-ghost" disabled={working} onClick={() => void setAll(true)}>
-          Označit vše
-        </button>
-        <button className="btn-ghost" disabled={working} onClick={() => void setAll(false)}>
-          Odznačit vše
-        </button>
-      </div>
-
-      <div className="space-y-1">
-        {shown.map((p) => {
-          const entry = inRoster.get(p.id);
-          const locked = lockedPlayerIds.has(p.id);
-          return (
-            <div
-              key={p.id}
-              className={`flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 ${
-                entry ? "bg-white/5" : "bg-transparent opacity-50"
-              }`}
-            >
-              <label className="flex flex-1 items-center gap-3">
-                <input
-                  type="checkbox"
-                  className="h-5 w-5 accent-[var(--color-ice-500)]"
-                  checked={Boolean(entry)}
-                  disabled={working || (locked && Boolean(entry))}
-                  onChange={(e) => void update(p.id, e.target.checked ? {} : { remove: true })}
-                />
-                <span className="font-medium">{playerLabel(p)}</span>
-                {locked && entry && (
-                  <span
-                    className="chip bg-amber-500/15 text-amber-300"
-                    title="Hráč už má v tomto zápase záznam, proto ho nelze vyřadit. Smažte nejdřív jeho události."
-                  >
-                    má záznam
-                  </span>
-                )}
-              </label>
-
-              {entry && (
-                <>
-                  <select
-                    className="field !w-auto !py-1"
-                    value={entry.position}
-                    disabled={working}
-                    onChange={(e) =>
-                      void update(p.id, { position: e.target.value as RosterEntry["position"] })
-                    }
-                  >
-                    <option value="B">Brankář</option>
-                    <option value="O">Obránce</option>
-                    <option value="Ú">Útočník</option>
-                  </select>
-                  <select
-                    className="field !w-auto !py-1"
-                    value={entry.line}
-                    disabled={working}
-                    onChange={(e) => void update(p.id, { line: Number(e.target.value) })}
-                  >
-                    <option value={0}>bez pětky</option>
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <option key={n} value={n}>
-                        {n}. pětka
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </div>
-          );
-        })}
-        {shown.length === 0 && (
-          <p className="py-6 text-center text-sm text-slate-500">Hledání nikoho nenašlo.</p>
-        )}
-      </div>
     </Modal>
   );
 }

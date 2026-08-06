@@ -34,14 +34,26 @@ střel soupeře. Obě strany ukazatele „Střely“ tak měří totéž.
 
 Aplikace sdílí Supabase projekt `dynamo-b-sklad` se skladovou aplikací:
 
-- **sdílí** `players` (hráče stačí založit jednou) a `seasons`
-- **přidává** `matches`, `match_roster`, `match_events`
+- **sdílí** `players` (kmenové hráče stačí založit jednou) a `seasons`
+- **přidává** `matches`, `match_roster`, `match_events`, `guest_players`
 
 Přístup hlídá RLS přes `is_authorized_user()` – stejný model jako zbytek projektu.
 Přihlašuje se stejným účtem jako do skladu; e-mail musí být v `app_users` s `active = true`.
 
-Pětka se ukládá k zápasu (`match_roster`), ne k hráči – mezi zápasy se sestava mění
-a historie tak zůstane věrná tomu, jak se skutečně hrálo.
+### Sestava, čísla dresů a výpomoc
+
+**Pětka i číslo dresu patří k zápasu** (`match_roster`), ne k hráči. Při marodce si
+výpomoc bere dres zraněného a přečíslují se i kmenoví hráči, takže jedině takhle
+zůstane historie věrná tomu, kdo v jakém čísle skutečně hrál. Databáze hlídá, že
+jedno číslo nosí v zápase právě jeden hráč.
+
+**Hostující hráči** (výpomoc z juniorky) jsou v `guest_players`, ne v `players` –
+skladová aplikace dělá `from('players').select('*')` bez filtru, takže cokoliv
+přidaného do `players` by se jí objevilo v seznamu pro výdej vybavení. Do dalšího
+zápasu se výpomoc nepřebírá; sestava se jinak nabízí podle minulého zápasu.
+
+Události proto odkazují na `players.id` i `guest_players.id` a jedním cizím klíčem
+je pokrýt nejde – členství v zápase drží `match_roster`, integritu hlídá aplikace.
 
 ## Vývoj
 

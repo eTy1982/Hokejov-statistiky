@@ -22,7 +22,7 @@ export type HomeAway = "home" | "away";
 export type MatchStatus = "live" | "finished";
 export type Side = "us" | "opp";
 
-/** Hráč ze sdílené tabulky public.players. */
+/** Kmenový hráč ze sdílené tabulky public.players (sdílí se se skladem). */
 export interface Player {
   id: string;
   fullName: string;
@@ -32,11 +32,46 @@ export interface Player {
   isActive: boolean;
 }
 
-/** Zařazení hráče do konkrétního zápasu – pětka se zápas od zápasu mění. */
+/** Hostující hráč – výpomoc z juniorky při marodce.
+ *  Vlastní tabulka, protože klub jim vybavení nevydává a ve skladu nemají co dělat. */
+export interface GuestPlayer {
+  id: string;
+  fullName: string;
+  note: string | null;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+/** Zařazení do konkrétního zápasu. Pětka i číslo dresu patří k zápasu, ne
+ *  k hráči – při marodce host převezme číslo zraněného a i kmenoví hráči se
+ *  občas přečíslují. */
 export interface RosterEntry {
-  playerId: string;
+  /** id řádku match_roster. */
+  id: string;
+  matchId: string;
+  /** Vyplněné je právě jedno z dvojice. */
+  playerId: string | null;
+  guestId: string | null;
+  jerseyNumber: number | null;
   line: number; // 0 = bez pětky, jinak 1..5
   position: Position;
+}
+
+/** Identita, na kterou odkazují události – buď players.id, nebo guest_players.id. */
+export const participantId = (entry: RosterEntry): string =>
+  (entry.playerId ?? entry.guestId)!;
+
+/** Kmenový i hostující hráč sjednocený pro potřeby zápasu.
+ *  Komponenty pracují s tímhle, ne se dvěma zdroji zvlášť. */
+export interface Participant {
+  rosterId: string;
+  /** Na tohle id odkazují události. */
+  id: string;
+  fullName: string;
+  jerseyNumber: number | null;
+  position: Position;
+  line: number;
+  isGuest: boolean;
 }
 
 export interface Match {

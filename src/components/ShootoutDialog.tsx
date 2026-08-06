@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
 import { Modal } from "./Modal";
-import { lineColor, playerNumber, sortRoster } from "../lib/format";
-import type { MatchEvent, Player, RosterEntry, Side, SoResult } from "../lib/types";
+import { lineColor, playerNumber } from "../lib/format";
+import type { MatchEvent, Participant, Side, SoResult } from "../lib/types";
 
 interface Props {
-  roster: RosterEntry[];
-  players: Map<string, Player>;
+  participants: Participant[];
   attempts: MatchEvent[];
   activeGoalieId: string | null;
   shootoutWinner: Side | null;
@@ -16,8 +15,7 @@ interface Props {
 }
 
 export function ShootoutDialog({
-  roster,
-  players,
+  participants,
   attempts,
   activeGoalieId,
   shootoutWinner,
@@ -36,14 +34,9 @@ export function ShootoutDialog({
   const goalsAgainst = theirs.filter((a) => a.soResult === "goal").length;
   const rounds = Math.max(ours.length, theirs.length);
 
-  const skaters = useMemo(
-    () => sortRoster(roster.filter((r) => r.position !== "B"), players),
-    [roster, players],
-  );
-  const goalies = useMemo(
-    () => sortRoster(roster.filter((r) => r.position === "B"), players),
-    [roster, players],
-  );
+  const skaters = useMemo(() => participants.filter((p) => p.position !== "B"), [participants]);
+  const goalies = useMemo(() => participants.filter((p) => p.position === "B"), [participants]);
+  const byId = useMemo(() => new Map(participants.map((p) => [p.id, p])), [participants]);
 
   const record = (result: SoResult) => {
     if (view === "us") {
@@ -57,23 +50,20 @@ export function ShootoutDialog({
     setView("menu");
   };
 
-  const tiles = (entries: RosterEntry[], selected: string | null, onPick: (id: string) => void) => (
+  const tiles = (entries: Participant[], selected: string | null, onPick: (id: string) => void) => (
     <div className="mb-4 grid grid-cols-4 gap-2 sm:grid-cols-6">
-      {entries.map((entry) => {
-        const player = players.get(entry.playerId);
-        if (!player) return null;
-        return (
-          <button
-            key={entry.playerId}
-            className={`tap-target rounded-xl border-2 py-3 text-xl font-bold text-white tabular-nums transition active:scale-95
-                        ${lineColor(entry.line, entry.position === "B")}
-                        ${selected === entry.playerId ? "ring-4 ring-amber-300" : ""}`}
-            onClick={() => onPick(entry.playerId)}
-          >
-            {playerNumber(player)}
-          </button>
-        );
-      })}
+      {entries.map((entry) => (
+        <button
+          key={entry.rosterId}
+          title={entry.fullName}
+          className={`tap-target rounded-xl border-2 py-3 text-xl font-bold text-white tabular-nums transition active:scale-95
+                      ${lineColor(entry.line, entry.position === "B")}
+                      ${selected === entry.id ? "ring-4 ring-amber-300" : ""}`}
+          onClick={() => onPick(entry.id)}
+        >
+          {playerNumber(entry)}
+        </button>
+      ))}
     </div>
   );
 
@@ -171,7 +161,7 @@ export function ShootoutDialog({
       {attempts.length > 0 && (
         <ol className="mt-5 space-y-1 border-t border-white/10 pt-3 text-sm">
           {attempts.map((a) => {
-            const who = players.get(a.playerId ?? a.goalieId ?? "");
+            const who = byId.get(a.playerId ?? a.goalieId ?? "");
             const ourAttempt = Boolean(a.playerId);
             const label = ourAttempt
               ? a.soResult === "goal"

@@ -1,13 +1,11 @@
 import { useRef } from "react";
-import type { Player } from "../lib/types";
+import type { Participant } from "../lib/types";
 import { lineColor, playerNumber, surname } from "../lib/format";
 
 const LONG_PRESS_MS = 500;
 
 interface Props {
-  player: Player;
-  line: number;
-  isGoalie: boolean;
+  participant: Participant;
   /** Hlavní počítadlo na dlaždici – střely u hráčů, zákroky u brankářů. */
   count: number;
   disabled?: boolean;
@@ -22,15 +20,14 @@ interface Props {
  *  ta zahazovala rychlé kliky na různé hráče. Dvojité započtení řeší to, že
  *  akce visí na `pointerup` téže dlaždice. */
 export function PlayerTile({
-  player,
-  line,
-  isGoalie,
+  participant,
   count,
   disabled,
   highlighted,
   onTap,
   onLongPress,
 }: Props) {
+  const isGoalie = participant.position === "B";
   const timer = useRef<number | null>(null);
   const longFired = useRef(false);
 
@@ -70,7 +67,7 @@ export function PlayerTile({
       disabled={disabled}
       className={`tap-target relative flex flex-col items-center justify-center rounded-2xl border-2 px-1 py-4
                   font-bold text-white shadow-md transition active:scale-[0.97]
-                  disabled:opacity-40 ${lineColor(line, isGoalie)}
+                  disabled:opacity-40 ${lineColor(participant.line, isGoalie)}
                   ${highlighted ? "ring-4 ring-amber-300" : ""}`}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
@@ -78,10 +75,18 @@ export function PlayerTile({
       onPointerLeave={clear}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <span className="text-3xl leading-none tabular-nums">{playerNumber(player)}</span>
+      <span className="text-3xl leading-none tabular-nums">{playerNumber(participant)}</span>
       <span className="mt-1 max-w-full truncate px-1 text-[11px] font-medium opacity-80">
-        {surname(player)}
+        {surname(participant)}
       </span>
+      {participant.isGuest && (
+        <span
+          className="absolute top-1.5 left-1.5 rounded bg-white/25 px-1 text-[9px] leading-tight"
+          title="Hostující hráč"
+        >
+          H
+        </span>
+      )}
       {count > 0 && (
         <span className="absolute top-1.5 right-1.5 min-w-6 rounded-full bg-black/50 px-1.5 py-0.5 text-xs tabular-nums">
           {count}
