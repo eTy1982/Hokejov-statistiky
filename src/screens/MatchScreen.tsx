@@ -30,6 +30,7 @@ interface Props {
 type Dialog =
   | { kind: "goal"; mode: "for" | "against"; editing: MatchEvent | null }
   | { kind: "penalty"; playerId: string }
+  | { kind: "oppPenalty" }
   | { kind: "shootout" }
   | { kind: "player"; playerId: string }
   | { kind: "lineup" }
@@ -425,30 +426,38 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       </div>
 
       {/* --------------------------------------------------- akce */}
-      <div className="no-print grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="no-print flex flex-wrap gap-2">
         <button
-          className="btn-success py-4 text-base"
+          className="btn-success min-w-36 flex-1 py-4 text-base"
           disabled={locked}
           onClick={() => setDialog({ kind: "goal", mode: "for", editing: null })}
         >
           🥅 Gól
         </button>
         <button
-          className="btn-danger py-4 text-base"
+          className="btn-danger min-w-36 flex-1 py-4 text-base"
           disabled={locked}
           onClick={() => setDialog({ kind: "goal", mode: "against", editing: null })}
         >
           💥 Obdržený
         </button>
         <button
-          className="btn-ghost py-4 text-base"
+          className="btn-ghost min-w-36 flex-1 py-4 text-base"
           disabled={locked}
           onClick={() => setDialog({ kind: "shootout" })}
         >
           ⚔️ Nájezdy
         </button>
         <button
-          className="btn-ghost py-4 text-base"
+          className="btn-ghost min-w-36 flex-1 py-4 text-base"
+          disabled={locked}
+          onClick={() => setDialog({ kind: "oppPenalty" })}
+          title="Trest soupeře – kvůli počtu přesilovek"
+        >
+          ⚠️ Trest soupeře
+        </button>
+        <button
+          className="btn-ghost min-w-36 flex-1 py-4 text-base"
           disabled={locked || liveEventsList.length === 0}
           onClick={() => void undoLast()}
         >
@@ -529,15 +538,24 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
         <PenaltyDialog
           player={participantMap.get(dialog.playerId)}
           onClose={() => setDialog(null)}
-          onSave={(clock, minutes, side) => {
+          onSave={(clock, minutes) => {
             void addEvent({
               type: "penalty",
-              // U trestu soupeře se hráč nevybírá – sloupec to dovoluje.
-              playerId: side === "us" ? dialog.playerId : null,
+              playerId: dialog.playerId,
               clock,
               penaltyMin: minutes,
-              side,
+              side: "us",
             });
+            setDialog(null);
+          }}
+        />
+      )}
+
+      {dialog?.kind === "oppPenalty" && (
+        <OpponentPenaltyDialog
+          onClose={() => setDialog(null)}
+          onSave={(minutes) => {
+            void addEvent({ type: "penalty", playerId: null, side: "opp", penaltyMin: minutes });
             setDialog(null);
           }}
         />
@@ -707,51 +725,26 @@ function PenaltyDialog({
 }: {
   player: Participant | undefined;
   onClose: () => void;
-  onSave: (clock: string | null, minutes: number, side: Side) => void;
+  onSave: (clock: string | null, minutes: number) => void;
 }) {
   const [clock, setClock] = useState("");
   const [minutes, setMinutes] = useState(2);
-  const [side, setSide] = useState<Side>("us");
 
   return (
     <Modal
-      title={side === "us" ? "Trest – " + playerLabel(player) : "Trest soupeře"}
+      title={"Trest – " + playerLabel(player)}
       onClose={onClose}
       footer={
         <>
           <button className="btn-ghost" onClick={onClose}>
             Zrušit
           </button>
-          <button className="btn-primary" onClick={() => onSave(normalizeClock(clock), minutes, side)}>
+          <button className="btn-primary" onClick={() => onSave(normalizeClock(clock), minutes)}>
             💾 Zapsat trest
           </button>
         </>
       }
     >
-      <div className="mb-4 flex gap-2">
-        {([
-          ["us", "Náš trest"],
-          ["opp", "Trest soupeře"],
-        ] as const).map(([value, label]) => (
-          <button
-            key={value}
-            className={
-              "flex-1 rounded-xl py-3 font-bold transition " +
-              (side === value ? "bg-ice-500 text-white" : "bg-white/5 text-slate-300")
-            }
-            onClick={() => setSide(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {side === "opp" && (
-        <p className="mb-4 rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-400">
-          U trestu soupeře se hráč nezapisuje – sledujeme jen čas a délku kvůli přesilovkám.
-        </p>
-      )}
-
       <div className="mb-4 flex gap-2">
         {[2, 5, 10].map((m) => (
           <button
@@ -766,6 +759,47 @@ function PenaltyDialog({
         ))}
       </div>
       <TimeInput value={clock} onChange={setClock} />
+    </Modal>
+  );
+}
+
+/* ------------------------------------------- trest soupeře */
+
+/** Od trestu soupeře potřebujeme jen to, že byl, a jak dlouhý – je to
+ *  jmenovatel úspěšnosti přesilovek. Kdo ho dostal ani kdy nesledujeme,
+ *  protože gól už si sám nese informaci, že padl v přesilovce. */
+function OpponentPenaltyDialog({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void;
+  onSave: (minutes: number) => void;
+}) {
+  return (
+    <Modal
+      title="Trest soupeře"
+      subtitle="Vyberte délku – tím se rovnou uloží."
+      onClose={onClose}
+      footer={
+        <button className="btn-ghost" onClick={onClose}>
+          Zrušit
+        </button>
+      }
+    >
+      <div className="flex gap-2">
+        {[2, 5, 10].map((m) => (
+          <button
+            key={m}
+            className="tap-target flex-1 rounded-2xl bg-amber-600 py-8 text-xl font-bold text-white transition active:scale-95"
+            onClick={() => onSave(m)}
+          >
+            {m} min
+          </button>
+        ))}
+      </div>
+      <p className="mt-3 text-center text-xs text-slate-500">
+        Zapisuje se jen kvůli počtu přesilovek – hráč ani čas nejsou potřeba.
+      </p>
     </Modal>
   );
 }

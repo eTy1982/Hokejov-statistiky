@@ -19,7 +19,22 @@ export type EventType =
 
 export type SoResult = "goal" | "miss" | "save";
 
-/** Stav hry v okamžiku gólu. U záznamů z doby před zavedením zůstává null. */
+/** Stav hry v okamžiku gólu. U záznamů z doby před zavedením zůstává null.
+ *
+ *  POZOR na konvenci: hodnota popisuje vždy **náš** početní stav, bez ohledu
+ *  na to, kdo gól dal. Platí tedy:
+ *
+ *  - goal_for  + pp = dali jsme gól ve své přesilovce
+ *  - goal_for  + sh = dali jsme gól ve svém oslabení
+ *  - goal_against + sh = inkasovali jsme ve svém oslabení, tedy gól soupeře
+ *    v jeho přesilovce (tohle je čitatel jeho úspěšnosti přesilovek)
+ *  - goal_against + pp = inkasovali jsme ve své přesilovce
+ *
+ *  U `en` je rozhodující, čí branka byla prázdná – vždy ta, do které gól padl.
+ *
+ *  Až se bude počítat úspěšnost, jmenovatele nese počet trestů:
+ *  naše přesilovky = tresty se `side = "opp"`, naše oslabení = `side = "us"`.
+ *  Časy trestů se s góly nepárují, není to potřeba. */
 export type Strength = "ev" | "pp" | "sh" | "en";
 export const STRENGTHS: { value: Strength; label: string; title: string }[] = [
   { value: "ev", label: "5:5", title: "Hra v plném počtu" },
@@ -117,7 +132,8 @@ export interface MatchEvent {
   penaltyMin: number | null;
   /** Jen u goal_for a goal_against. Starší záznamy mají null. */
   strength: Strength | null;
-  /** Jen u penalty: čí to byl trest. Starší záznamy mají null, byly vždy naše. */
+  /** Jen u penalty: čí to byl trest. Starší záznamy mají null, byly vždy naše.
+   *  U trestu soupeře (`opp`) zůstává playerId null – hráče soupeře nesledujeme. */
   side: Side | null;
   deleted: boolean;
   updatedAt: string;
