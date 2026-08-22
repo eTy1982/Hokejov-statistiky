@@ -2,18 +2,19 @@ import { useState } from "react";
 import { Modal } from "./Modal";
 import { TimeInput } from "./TimeInput";
 import { lineColor, normalizeClock, playerNumber, PERIOD_LABEL } from "../lib/format";
-import type { MatchEvent, Participant } from "../lib/types";
+import { STRENGTHS, type MatchEvent, type Participant, type Strength } from "../lib/types";
 
 type Mode = "for" | "against";
 type Tab = "shooter" | "assist" | "plus" | "goalie" | "minus" | "clock";
 
 export interface GoalDraft {
-  clock: string | null;
+  clock: string;
   playerId: string | null;
   goalieId: string | null;
   assists: string[];
   onIcePlus: string[];
   onIceMinus: string[];
+  strength: Strength;
 }
 
 interface Props {
@@ -46,6 +47,7 @@ export function GoalDialog({
     ),
   );
   const [minus, setMinus] = useState<string[]>(editing?.onIceMinus ?? []);
+  const [strength, setStrength] = useState<Strength>(editing?.strength ?? "ev");
   const [tab, setTab] = useState<Tab>(mode === "for" ? "shooter" : "goalie");
   const [error, setError] = useState<string | null>(null);
 
@@ -94,9 +96,16 @@ export function GoalDialog({
     }
   };
 
+  const clockValue = normalizeClock(clock);
+
   const save = (withoutAssists = false) => {
     // Validace probíhá dřív, než se cokoli uloží – nedokončený zápis nesmí
     // zanechat žádnou stopu ve statistikách.
+    if (!clockValue) {
+      setError("Vyplňte čas gólu.");
+      setTab("clock");
+      return;
+    }
     if (mode === "for" && !shooter) {
       setError("Vyberte střelce.");
       setTab("shooter");
@@ -109,7 +118,7 @@ export function GoalDialog({
     }
     const finalAssists = withoutAssists ? [] : assists.slice(0, 2);
     onSave({
-      clock: normalizeClock(clock),
+      clock: clockValue,
       playerId: mode === "for" ? shooter : null,
       goalieId: mode === "against" ? goalie : null,
       assists: mode === "for" ? finalAssists : [],
@@ -118,6 +127,7 @@ export function GoalDialog({
           ? [...new Set([shooter!, ...finalAssists, ...plus])]
           : [],
       onIceMinus: mode === "against" ? minus : [],
+      strength,
     });
   };
 
@@ -127,12 +137,12 @@ export function GoalDialog({
           { key: "shooter", label: "Střelec" },
           { key: "assist", label: `Asistence (${assists.length}/2)` },
           { key: "plus", label: `Plus (${plus.length})` },
-          { key: "clock", label: "Čas" },
+          { key: "clock", label: clockValue ? "Čas " + clockValue : "Čas ⚠" },
         ]
       : [
           { key: "goalie", label: "Brankář" },
           { key: "minus", label: `Minus (${minus.length})` },
-          { key: "clock", label: "Čas" },
+          { key: "clock", label: clockValue ? "Čas " + clockValue : "Čas ⚠" },
         ];
 
   const title = editing
@@ -155,11 +165,11 @@ export function GoalDialog({
             Zrušit
           </button>
           {mode === "for" && !editing && (
-            <button className="btn-ghost" onClick={() => save(true)}>
+            <button className="btn-ghost" disabled={!clockValue} onClick={() => save(true)}>
               Uložit bez asistencí
             </button>
           )}
-          <button className="btn-success" onClick={() => save(false)}>
+          <button className="btn-success" disabled={!clockValue} onClick={() => save(false)}>
             💾 Uložit
           </button>
         </>
@@ -177,6 +187,28 @@ export function GoalDialog({
             {t.label}
           </button>
         ))}
+      </div>
+
+      <div className="mb-3 flex items-center gap-2 rounded-xl bg-white/5 p-2">
+        <span className="px-1 text-xs tracking-wide text-slate-400 uppercase">Stav hry</span>
+        <div className="flex flex-1 gap-1">
+          {STRENGTHS.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              title={s.title}
+              className={
+                "flex-1 rounded-lg py-2 text-sm font-bold transition " +
+                (strength === s.value
+                  ? "bg-ice-500 text-white"
+                  : "bg-white/5 text-slate-300 hover:bg-white/10")
+              }
+              onClick={() => setStrength(s.value)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (

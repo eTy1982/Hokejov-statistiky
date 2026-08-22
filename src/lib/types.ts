@@ -18,6 +18,15 @@ export type EventType =
   | "so_attempt"; // pokus v samostatných nájezdech
 
 export type SoResult = "goal" | "miss" | "save";
+
+/** Stav hry v okamžiku gólu. U záznamů z doby před zavedením zůstává null. */
+export type Strength = "ev" | "pp" | "sh" | "en";
+export const STRENGTHS: { value: Strength; label: string; title: string }[] = [
+  { value: "ev", label: "5:5", title: "Hra v plném počtu" },
+  { value: "pp", label: "PP", title: "Přesilovka" },
+  { value: "sh", label: "SH", title: "Oslabení" },
+  { value: "en", label: "EN", title: "Prázdná branka" },
+];
 export type HomeAway = "home" | "away";
 export type MatchStatus = "live" | "finished";
 export type Side = "us" | "opp";
@@ -106,6 +115,10 @@ export interface MatchEvent {
   soResult: SoResult | null;
   soRound: number | null;
   penaltyMin: number | null;
+  /** Jen u goal_for a goal_against. Starší záznamy mají null. */
+  strength: Strength | null;
+  /** Jen u penalty: čí to byl trest. Starší záznamy mají null, byly vždy naše. */
+  side: Side | null;
   deleted: boolean;
   updatedAt: string;
 }
@@ -125,6 +138,8 @@ export function makeEvent(
     soResult: null,
     soRound: null,
     penaltyMin: null,
+    strength: null,
+    side: null,
     deleted: false,
     updatedAt: new Date().toISOString(),
     ...base,

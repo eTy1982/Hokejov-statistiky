@@ -201,6 +201,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
         assists: draft.assists,
         onIcePlus: draft.onIcePlus,
         onIceMinus: draft.onIceMinus,
+        strength: draft.strength,
       });
       onChanged();
       await reload();
@@ -213,6 +214,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
         assists: draft.assists,
         onIcePlus: draft.onIcePlus,
         onIceMinus: draft.onIceMinus,
+        strength: draft.strength,
       });
     }
     setDialog(null);
@@ -525,14 +527,16 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
 
       {dialog?.kind === "penalty" && (
         <PenaltyDialog
-          player={playerMap.get(dialog.playerId)}
+          player={participantMap.get(dialog.playerId)}
           onClose={() => setDialog(null)}
-          onSave={(clock, minutes) => {
+          onSave={(clock, minutes, side) => {
             void addEvent({
               type: "penalty",
-              playerId: dialog.playerId,
+              // U trestu soupeře se hráč nevybírá – sloupec to dovoluje.
+              playerId: side === "us" ? dialog.playerId : null,
               clock,
               penaltyMin: minutes,
+              side,
             });
             setDialog(null);
           }}
@@ -599,6 +603,13 @@ function EventRow({
   const name = (id: string | null) => (id ? playerNumber(players.get(id)) : "?");
   const period = PERIOD_SHORT[event.period] ?? event.period;
 
+  const strengthTag =
+    event.strength && event.strength !== "ev" ? (
+      <span className="ml-1 rounded bg-black/40 px-1 text-[10px] font-bold tracking-wide">
+        {event.strength.toUpperCase()}
+      </span>
+    ) : null;
+
   let text: React.ReactNode = null;
   let accent = "bg-white/5";
 
@@ -608,6 +619,7 @@ function EventRow({
       text = (
         <>
           <strong>Gól</strong> #{name(event.playerId)}
+          {strengthTag}
           {event.assists.length > 0 && (
             <span className="text-slate-400">
               {" "}
@@ -621,7 +633,9 @@ function EventRow({
       accent = "bg-rose-500/10";
       text = (
         <>
-          <strong>Obdržený gól</strong> <span className="text-slate-400">B: #{name(event.goalieId)}</span>
+          <strong>Obdržený gól</strong>
+          {strengthTag}{" "}
+          <span className="text-slate-400">B: #{name(event.goalieId)}</span>
           {event.onIceMinus.length > 0 && (
             <span className="text-slate-400">
               {" "}
@@ -635,7 +649,8 @@ function EventRow({
       accent = "bg-amber-500/10";
       text = (
         <>
-          <strong>Trest</strong> #{name(event.playerId)}
+          <strong>{event.side === "opp" ? "Trest soupeře" : "Trest"}</strong>
+          {event.side !== "opp" && <> #{name(event.playerId)}</>}
           {event.penaltyMin ? <span className="text-slate-400"> ({event.penaltyMin} min)</span> : null}
         </>
       );
@@ -690,28 +705,53 @@ function PenaltyDialog({
   onClose,
   onSave,
 }: {
-  player: Player | undefined;
+  player: Participant | undefined;
   onClose: () => void;
-  onSave: (clock: string | null, minutes: number) => void;
+  onSave: (clock: string | null, minutes: number, side: Side) => void;
 }) {
   const [clock, setClock] = useState("");
   const [minutes, setMinutes] = useState(2);
+  const [side, setSide] = useState<Side>("us");
 
   return (
     <Modal
-      title={`Trest – ${playerLabel(player)}`}
+      title={side === "us" ? "Trest – " + playerLabel(player) : "Trest soupeře"}
       onClose={onClose}
       footer={
         <>
           <button className="btn-ghost" onClick={onClose}>
             Zrušit
           </button>
-          <button className="btn-primary" onClick={() => onSave(normalizeClock(clock), minutes)}>
+          <button className="btn-primary" onClick={() => onSave(normalizeClock(clock), minutes, side)}>
             💾 Zapsat trest
           </button>
         </>
       }
     >
+      <div className="mb-4 flex gap-2">
+        {([
+          ["us", "Náš trest"],
+          ["opp", "Trest soupeře"],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            className={
+              "flex-1 rounded-xl py-3 font-bold transition " +
+              (side === value ? "bg-ice-500 text-white" : "bg-white/5 text-slate-300")
+            }
+            onClick={() => setSide(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {side === "opp" && (
+        <p className="mb-4 rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-400">
+          U trestu soupeře se hráč nezapisuje – sledujeme jen čas a délku kvůli přesilovkám.
+        </p>
+      )}
+
       <div className="mb-4 flex gap-2">
         {[2, 5, 10].map((m) => (
           <button

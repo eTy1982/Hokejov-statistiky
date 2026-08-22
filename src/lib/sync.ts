@@ -20,7 +20,7 @@ import {
   putRoster,
   setMeta,
 } from "./db";
-import type { GuestPlayer, Match, MatchEvent, Player, Position, SoResult } from "./types";
+import type { GuestPlayer, Match, MatchEvent, Player, Position, Side, SoResult, Strength } from "./types";
 
 const LAST_PULL = "lastPullAt";
 
@@ -102,6 +102,8 @@ type EventRow = {
   so_result: SoResult | null;
   so_round: number | null;
   penalty_min: number | null;
+  strength: Strength | null;
+  side: Side | null;
   deleted: boolean;
   updated_at: string;
 };
@@ -122,6 +124,8 @@ const eventToRow = (e: MatchEvent): EventRow => ({
   so_result: e.soResult,
   so_round: e.soRound,
   penalty_min: e.penaltyMin,
+  strength: e.strength,
+  side: e.side,
   deleted: e.deleted,
   updated_at: e.updatedAt,
 });
@@ -141,6 +145,8 @@ const rowToEvent = (r: EventRow): MatchEvent => ({
   soResult: r.so_result,
   soRound: r.so_round,
   penaltyMin: r.penalty_min,
+  strength: r.strength ?? null,
+  side: r.side ?? null,
   deleted: r.deleted,
   updatedAt: r.updated_at,
 });
