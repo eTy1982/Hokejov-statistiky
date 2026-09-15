@@ -644,6 +644,14 @@ function EventRow({
               (A: {event.assists.map((id) => `#${name(id)}`).join(", ")})
             </span>
           )}
+          {/* Úplný seznam plusů, včetně střelce a asistentů – u zapisovatele
+              se hlásí celá pětka na ledě a nemá se dopočítávat z hlavy. */}
+          {event.onIcePlus.length > 0 && (
+            <span className="text-emerald-300/80">
+              {" "}
+              (+: {event.onIcePlus.map((id) => `#${name(id)}`).join(", ")})
+            </span>
+          )}
         </>
       );
       break;
@@ -655,7 +663,7 @@ function EventRow({
           {strengthTag}{" "}
           <span className="text-slate-400">B: #{name(event.goalieId)}</span>
           {event.onIceMinus.length > 0 && (
-            <span className="text-slate-400">
+            <span className="text-rose-300/80">
               {" "}
               (−: {event.onIceMinus.map((id) => `#${name(id)}`).join(", ")})
             </span>
@@ -694,12 +702,14 @@ function EventRow({
   }
 
   return (
-    <li className={`flex items-center gap-3 px-4 py-2 text-sm ${accent}`}>
-      <span className="w-20 shrink-0 text-xs text-slate-500 tabular-nums">
+    <li className={`flex items-start gap-3 px-4 py-2 text-sm ${accent}`}>
+      <span className="w-20 shrink-0 pt-0.5 text-xs text-slate-500 tabular-nums">
         {period}
         {event.clock ? ` ${event.clock}` : ""}
       </span>
-      <span className="min-w-0 flex-1 truncate">{text}</span>
+      {/* Bez ořezávání – u zapisovatele se z řádku čte celá sestava na ledě,
+          takže se radši zalomí na víc řádků, než aby zmizela pod třemi tečkami. */}
+      <span className="min-w-0 flex-1">{text}</span>
       {!locked && (
         <span className="no-print flex shrink-0 gap-1">
           {onEdit && (
