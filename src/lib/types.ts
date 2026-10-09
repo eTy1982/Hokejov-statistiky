@@ -15,7 +15,9 @@ export type EventType =
   | "goal_for" // vstřelený gól
   | "goal_against" // obdržený gól
   | "penalty" // trest
-  | "so_attempt"; // pokus v samostatných nájezdech
+  | "so_attempt" // pokus v samostatných nájezdech
+  | "period_start" // buly – začátek třetiny, nese skutečný čas
+  | "period_end"; // konec třetiny, nese skutečný čas
 
 export type SoResult = "goal" | "miss" | "save";
 
@@ -129,12 +131,20 @@ export interface MatchEvent {
   onIceMinus: string[];
   soResult: SoResult | null;
   soRound: number | null;
+  /** Trestné minuty celkem (PIM). Odvozené z `penaltyCode`, viz penalty.ts. */
   penaltyMin: number | null;
+  /** Skladba trestu: `2`, `2+2`, `5`, `10`, `OK`, `2+10`, `5+OK`, … Starší
+   *  záznamy mají null a jejich kód se dopočítá z `penaltyMin`. */
+  penaltyCode: string | null;
   /** Jen u goal_for a goal_against. Starší záznamy mají null. */
   strength: Strength | null;
   /** Jen u penalty: čí to byl trest. Starší záznamy mají null, byly vždy naše.
    *  U trestu soupeře (`opp`) zůstává playerId null – hráče soupeře nesledujeme. */
   side: Side | null;
+  /** Skutečný čas ťuknutí (ISO). `clock` je proti tomu odehraný čas v třetině.
+   *  U značek třetin je povinný – kondiční trenér podle nich páruje data
+   *  z Catapultu. Starší záznamy mají null. */
+  recordedAt: string | null;
   deleted: boolean;
   updatedAt: string;
 }
@@ -154,10 +164,14 @@ export function makeEvent(
     soResult: null,
     soRound: null,
     penaltyMin: null,
+    penaltyCode: null,
     strength: null,
     side: null,
     deleted: false,
     updatedAt: new Date().toISOString(),
     ...base,
+    // Až po rozprostření: nová událost vzniká teď, ale volající smí čas předat
+    // (import, test). Starý záznam s `null` se vyrábí přepsáním po návratu.
+    recordedAt: base.recordedAt ?? new Date().toISOString(),
   };
 }

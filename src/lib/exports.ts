@@ -63,6 +63,7 @@ export function exportMatchStatsXlsx(
     record["Plus"] = s ? sumCounts(s.plus) : 0;
     record["Minus"] = s ? sumCounts(s.minus) : 0;
     record["Tresty"] = s ? sumTimes(s.penalties) : 0;
+    record["TM"] = s ? s.pim : 0;
     record["Zákroky"] = s ? sumCounts(s.saves) : 0;
     record["Obdržené"] = s ? sumTimes(s.goalsAgainst) : 0;
     record["SV%"] = sv === null ? "" : Number(sv.toFixed(1));

@@ -102,8 +102,10 @@ type EventRow = {
   so_result: SoResult | null;
   so_round: number | null;
   penalty_min: number | null;
+  penalty_code: string | null;
   strength: Strength | null;
   side: Side | null;
+  recorded_at: string | null;
   deleted: boolean;
   updated_at: string;
 };
@@ -124,8 +126,12 @@ const eventToRow = (e: MatchEvent): EventRow => ({
   so_result: e.soResult,
   so_round: e.soRound,
   penalty_min: e.penaltyMin,
+  // `?? null`: záznamy uložené do IndexedDB starší verzí aplikace pole vůbec
+  // nemají, a `undefined` by PostgREST ze zápisu vynechal.
+  penalty_code: e.penaltyCode ?? null,
   strength: e.strength,
   side: e.side,
+  recorded_at: e.recordedAt ?? null,
   deleted: e.deleted,
   updated_at: e.updatedAt,
 });
@@ -145,8 +151,10 @@ const rowToEvent = (r: EventRow): MatchEvent => ({
   soResult: r.so_result,
   soRound: r.so_round,
   penaltyMin: r.penalty_min,
+  penaltyCode: r.penalty_code ?? null,
   strength: r.strength ?? null,
   side: r.side ?? null,
+  recordedAt: r.recorded_at ?? null,
   deleted: r.deleted,
   updatedAt: r.updated_at,
 });

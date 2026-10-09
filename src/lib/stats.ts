@@ -7,6 +7,9 @@
  *  Konvence: gól JE střela na branku. Vstřelený gól se tedy počítá i do střel,
  *  stejně jako se obdržený gól počítá do střel soupeře (zásahy + obdržené).
  *  Díky tomu jsou obě strany ukazatele „Střely“ měřené stejně.
+ *
+ *  Značky třetin (`period_start` / `period_end`) do statistik nevstupují –
+ *  `switch` je prostě nezná. Časy třetin se čtou zvlášť (periods.ts).
  */
 import { PERIODS, type MatchEvent, type Period, type RegularPeriod, type Side } from "./types";
 
@@ -23,6 +26,8 @@ export interface PlayerStats {
   plus: PeriodCounts;
   minus: PeriodCounts;
   penalties: Record<RegularPeriod, string[]>;
+  /** Trestné minuty celkem (PIM) – součet přes všechny vlastní tresty. */
+  pim: number;
   /** Brankář: zákroky. */
   saves: PeriodCounts;
   /** Brankář: obdržené góly (časy). */
@@ -41,6 +46,7 @@ export const emptyPlayerStats = (): PlayerStats => ({
   plus: zeroCounts(),
   minus: zeroCounts(),
   penalties: emptyTimes(),
+  pim: 0,
   saves: zeroCounts(),
   goalsAgainst: emptyTimes(),
   soAttempts: 0,
@@ -183,8 +189,12 @@ export function computeStats(events: MatchEvent[], shootoutWinner: Side | null =
         break;
       }
       case "penalty": {
+        if (e.side === "opp") break; // trest soupeře nikomu z nás minuty nepřidá
         const s = of(e.playerId);
-        if (s) push(s.penalties, p, clock);
+        if (s) {
+          push(s.penalties, p, clock);
+          s.pim += e.penaltyMin ?? 0;
+        }
         break;
       }
     }

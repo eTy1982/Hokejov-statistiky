@@ -81,6 +81,69 @@ describe("computeStats – základní zápis", () => {
   });
 });
 
+describe("trestné minuty", () => {
+  it("sčítají se přes celý zápas", () => {
+    const { byPlayer } = computeStats([
+      ev({ type: "penalty", playerId: NOVAK, clock: "08:15", penaltyCode: "2", penaltyMin: 2 }),
+      ev({
+        type: "penalty",
+        playerId: NOVAK,
+        clock: "12:00",
+        period: "2",
+        penaltyCode: "5+OK",
+        penaltyMin: 25,
+      }),
+    ]);
+    expect(byPlayer[NOVAK]!.pim).toBe(27);
+    expect(sumTimes(byPlayer[NOVAK]!.penalties)).toBe(2);
+  });
+
+  it("trest soupeře nikomu z nás minuty nepřidá", () => {
+    const { byPlayer } = computeStats([
+      ev({ type: "penalty", playerId: null, side: "opp", clock: "07:00", penaltyMin: 2 }),
+    ]);
+    expect(Object.keys(byPlayer)).toEqual([]);
+  });
+
+  it("starý trest bez kódu se počítá podle zapsaných minut", () => {
+    const { byPlayer } = computeStats([
+      ev({ type: "penalty", playerId: NOVAK, clock: "08:15", penaltyCode: null, penaltyMin: 2 }),
+    ]);
+    expect(byPlayer[NOVAK]!.pim).toBe(2);
+  });
+
+  it("trest bez minut nikoho nepoškodí", () => {
+    const { byPlayer } = computeStats([
+      ev({ type: "penalty", playerId: NOVAK, clock: "08:15", penaltyMin: null }),
+    ]);
+    expect(byPlayer[NOVAK]!.pim).toBe(0);
+    expect(sumTimes(byPlayer[NOVAK]!.penalties)).toBe(1);
+  });
+
+  it("smazaný trest minuty odebere", () => {
+    const { byPlayer } = computeStats([
+      ev({ type: "penalty", playerId: NOVAK, clock: "08:15", penaltyMin: 2, deleted: true }),
+    ]);
+    expect(byPlayer[NOVAK]).toBeUndefined();
+  });
+});
+
+describe("značky třetin", () => {
+  it("do statistik nevstupují", () => {
+    const bezZnacek = computeStats([
+      ev({ type: "shot", playerId: NOVAK }),
+      ev({ type: "goal_for", playerId: NOVAK, clock: "10:00" }),
+    ]);
+    const seZnackami = computeStats([
+      ev({ type: "period_start", recordedAt: "2026-10-07T17:00:00.000Z" }),
+      ev({ type: "shot", playerId: NOVAK }),
+      ev({ type: "goal_for", playerId: NOVAK, clock: "10:00" }),
+      ev({ type: "period_end", recordedAt: "2026-10-07T17:28:00.000Z" }),
+    ]);
+    expect(seZnackami).toEqual(bezZnacek);
+  });
+});
+
 describe("computeStats – odolnost proti rozhození součtů", () => {
   it("smazaná událost se do statistik vůbec nepromítne", () => {
     const events = [
