@@ -32,7 +32,7 @@ export function StatsTable({ participants, stats, onSelectPlayer }: Props) {
       acc.assists += sumCounts(s.assists);
       acc.plus += sumCounts(s.plus);
       acc.minus += sumCounts(s.minus);
-      acc.penalties += sumTimes(s.penalties);
+      acc.pim += s.pim;
       return acc;
     },
     {
@@ -41,7 +41,7 @@ export function StatsTable({ participants, stats, onSelectPlayer }: Props) {
       assists: 0,
       plus: 0,
       minus: 0,
-      penalties: 0,
+      pim: 0,
     },
   );
 
@@ -66,7 +66,9 @@ export function StatsTable({ participants, stats, onSelectPlayer }: Props) {
                 <th className="px-2 py-2">B</th>
                 <th className="px-2 py-2">+</th>
                 <th className="px-2 py-2">−</th>
-                <th className="px-2 py-2">TM</th>
+                <th className="px-2 py-2" title="Trestné minuty">
+                  TM
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -106,8 +108,15 @@ export function StatsTable({ participants, stats, onSelectPlayer }: Props) {
                     <td className="px-2 py-2 text-center tabular-nums text-rose-300">
                       {sumCounts(s.minus) || ""}
                     </td>
-                    <td className="px-2 py-2 text-center tabular-nums">
-                      {sumTimes(s.penalties) || ""}
+                    <td
+                      className="px-2 py-2 text-center tabular-nums"
+                      title={
+                        sumTimes(s.penalties)
+                          ? `${sumTimes(s.penalties)}× trest`
+                          : undefined
+                      }
+                    >
+                      {s.pim || ""}
                     </td>
                   </tr>
                 );
@@ -130,7 +139,7 @@ export function StatsTable({ participants, stats, onSelectPlayer }: Props) {
                 </td>
                 <td className="px-2 py-2 text-center tabular-nums">{totals.plus}</td>
                 <td className="px-2 py-2 text-center tabular-nums">{totals.minus}</td>
-                <td className="px-2 py-2 text-center tabular-nums">{totals.penalties}</td>
+                <td className="px-2 py-2 text-center tabular-nums">{totals.pim}</td>
               </tr>
             </tbody>
           </table>

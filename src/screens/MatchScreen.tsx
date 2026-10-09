@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   allGuests,
   eventsOfMatch,
@@ -10,15 +10,44 @@ import {
   softDeleteEvent,
 } from "../lib/db";
 import { computeStats, scoreboard, sumCounts, sumTimes } from "../lib/stats";
-import { makeEvent, PERIODS, type GuestPlayer, type Match, type MatchEvent, type Participant, type Period, type Player, type RosterEntry, type Side, type SoResult } from "../lib/types";
-import { PERIOD_SHORT, buildParticipants, lineColor, normalizeClock, playerLabel, playerNumber } from "../lib/format";
-import { PlayerTile } from "../components/PlayerTile";
+import {
+  PERIODS,
+  makeEvent,
+  type GuestPlayer,
+  type Match,
+  type MatchEvent,
+  type Participant,
+  type Period,
+  type Player,
+  type RegularPeriod,
+  type Side,
+  type SoResult,
+} from "../lib/types";
+import {
+  PERIOD_SHORT,
+  buildParticipants,
+  describePenaltyEnd,
+  formatDate,
+  formatTimeOfDay,
+  playerLabel,
+  playerNumber,
+} from "../lib/format";
+import { clockToSeconds } from "../lib/clock";
+import { describeEvent } from "../lib/eventText";
+import { periodState } from "../lib/periods";
+import { strengthAt } from "../lib/strength";
+import { useLayoutSize } from "../hooks/useLayoutSize";
+import { useBoardCountsDown } from "../hooks/useBoardCountsDown";
+import { PlayerGrid } from "../components/PlayerGrid";
+import { MatchTopBar, type StrengthLine } from "../components/MatchTopBar";
+import { Toast, type ToastState } from "../components/Toast";
 import { GoalDialog, type GoalDraft } from "../components/GoalDialog";
+import { PenaltyDialog, type PenaltyDraft } from "../components/PenaltyDialog";
 import { ShootoutDialog } from "../components/ShootoutDialog";
 import { LineupDialog } from "../components/LineupDialog";
+import { PeriodTimesPanel } from "../components/PeriodTimesPanel";
 import { StatsTable } from "../components/StatsTable";
 import { Modal } from "../components/Modal";
-import { TimeInput } from "../components/TimeInput";
 
 interface Props {
   matchId: string;
@@ -29,26 +58,36 @@ interface Props {
 
 type Dialog =
   | { kind: "goal"; mode: "for" | "against"; editing: MatchEvent | null }
-  | { kind: "penalty"; playerId: string }
-  | { kind: "oppPenalty" }
+  | { kind: "penalty"; playerId: string | null }
   | { kind: "shootout" }
   | { kind: "player"; playerId: string }
   | { kind: "lineup" }
+  | { kind: "times" }
   | null;
+
+/** Co umí vrátit tlačítko „Vrátit“. Výměna brankáře není událost, ale vrátit
+ *  se musí stejně – proto jeden společný zásobník. */
+type UndoEntry =
+  | { kind: "event"; clientId: string; label: string }
+  | { kind: "goalie"; previousId: string | null; label: string };
 
 const goalieKey = (matchId: string) => `dynamo-stats-goalie-${matchId}`;
 
 export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
+  const size = useLayoutSize();
   const [match, setMatch] = useState<Match | null>(null);
   const [events, setEvents] = useState<MatchEvent[]>([]);
-  const [roster, setRoster] = useState<RosterEntry[]>([]);
+  const [roster, setRoster] = useState<RosterEntryList>([]);
   const [guests, setGuests] = useState<GuestPlayer[]>([]);
-  const [period, setPeriod] = useState<Period>("1");
-  const [lineFilter, setLineFilter] = useState(0);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
+  /** Jen pro staré zápasy bez značek třetin. */
+  const [manualPeriod, setManualPeriod] = useState<RegularPeriod>("1");
   const [activeGoalieId, setActiveGoalieId] = useState<string | null>(() =>
     localStorage.getItem(goalieKey(matchId)),
   );
+  const toastId = useRef(0);
 
   const playerMap = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
 
@@ -70,6 +109,17 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
   }, [reload]);
 
   const locked = match?.status === "finished";
+  const [countsDown] = useBoardCountsDown(match?.venue ?? null);
+
+  /* --------------------------------------------------------- odvozený stav */
+
+  const state = useMemo(() => periodState(events), [events]);
+  /** Třetina, do které se zapisuje. Běžící má přednost; starý zápas bez
+   *  značek se řídí ručním přepínačem. */
+  const period: Period = state.hasMarks
+    ? (state.running ?? state.last ?? manualPeriod)
+    : manualPeriod;
+  const canRecord = !locked && (state.hasMarks ? state.phase === "running" : true);
 
   const { byPlayer, totals } = useMemo(
     () => computeStats(events, match?.shootoutWinner ?? null),
@@ -91,11 +141,6 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     () => new Map(participants.map((p) => [p.id, p])),
     [participants],
   );
-
-  const visibleParticipants = useMemo(() => {
-    if (lineFilter === 0) return participants;
-    return participants.filter((p) => p.position === "B" || p.line === lineFilter);
-  }, [participants, lineFilter]);
 
   /** Hráči, kteří v zápase něco mají. Takového nelze ze sestavy jen tak vyřadit,
    *  jeho záznamy by zmizely z tabulky, ale dál by se počítaly do skóre. */
@@ -132,12 +177,6 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     return [...participants, ...extra];
   }, [participants, playersWithEvents, playerMap, guestMap]);
 
-  const availableLines = useMemo(
-    () =>
-      [...new Set(participants.filter((p) => p.position !== "B" && p.line > 0).map((p) => p.line))].sort(),
-    [participants],
-  );
-
   const liveEventsList = useMemo(
     () => events.filter((e) => !e.deleted).sort((a, b) => b.seq - a.seq),
     [events],
@@ -147,17 +186,49 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     [events],
   );
 
-  /* ----------------------------------------------------------- zápis */
+  const nameOf = useCallback(
+    (id: string | null) => {
+      if (!id) return "";
+      const participant = participantMap.get(id) ?? playerMap.get(id);
+      return participant ? `#${playerNumber(participant)}` : "";
+    },
+    [participantMap, playerMap],
+  );
+
+  /* ------------------------------------------------------------ oznámení */
+
+  const notify = useCallback((text: string, canUndo = true) => {
+    toastId.current += 1;
+    setToast({ id: toastId.current, text, canUndo });
+  }, []);
+
+  const closeToast = useCallback(() => setToast(null), []);
+
+  /* ---------------------------------------------------------------- zápis */
 
   const addEvent = useCallback(
     async (partial: Partial<MatchEvent> & Pick<MatchEvent, "type">) => {
-      if (locked) return;
+      if (locked) return null;
       const seq = await nextSeq(matchId);
-      await putEvent(makeEvent({ matchId, seq, period, ...partial }));
+      const event = makeEvent({ matchId, seq, period, ...partial });
+      await putEvent(event);
       onChanged();
       await reload();
+      return event;
     },
     [locked, matchId, period, onChanged, reload],
+  );
+
+  /** Zapíše a zároveň ohlásí – tohle je cesta, po které jde většina ťuknutí. */
+  const record = useCallback(
+    async (partial: Partial<MatchEvent> & Pick<MatchEvent, "type">) => {
+      const event = await addEvent(partial);
+      if (!event) return;
+      const label = describeEvent(event, nameOf);
+      setUndoStack((stack) => [...stack, { kind: "event", clientId: event.clientId, label }]);
+      notify(label);
+    },
+    [addEvent, nameOf, notify],
   );
 
   const patchMatch = useCallback(
@@ -179,16 +250,84 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     [onChanged, reload],
   );
 
-  const undoLast = useCallback(async () => {
+  const setGoalie = useCallback(
+    (goalieId: string | null) => {
+      setActiveGoalieId(goalieId);
+      if (goalieId) localStorage.setItem(goalieKey(matchId), goalieId);
+      else localStorage.removeItem(goalieKey(matchId));
+    },
+    [matchId],
+  );
+
+  const undoLabel = useMemo(() => {
+    const top = undoStack[undoStack.length - 1];
+    if (top) return top.label;
     const last = liveEventsList[0];
-    if (!last) return;
-    await removeEvent(last.clientId);
-  }, [liveEventsList, removeEvent]);
+    return last ? describeEvent(last, nameOf) : null;
+  }, [undoStack, liveEventsList, nameOf]);
+
+  const undo = useCallback(async () => {
+    const top = undoStack[undoStack.length - 1];
+    if (top) {
+      setUndoStack((stack) => stack.slice(0, -1));
+      if (top.kind === "goalie") setGoalie(top.previousId);
+      else await removeEvent(top.clientId);
+      return;
+    }
+    // Po znovuotevření zápasu zásobník prázdný je – ať jde vrátit i tak.
+    const last = liveEventsList[0];
+    if (last) await removeEvent(last.clientId);
+  }, [undoStack, liveEventsList, removeEvent, setGoalie]);
+
+  /* ------------------------------------------------------- ťuknutí na hráče */
+
+  const hintNotRunning = useCallback(() => {
+    notify("Třetina neběží – nejdřív ťukni Buly", false);
+  }, [notify]);
 
   const onTapPlayer = (entry: Participant) => {
-    if (entry.position === "B") void addEvent({ type: "save", goalieId: entry.id });
-    else void addEvent({ type: "shot", playerId: entry.id });
+    if (locked) return;
+    if (!canRecord) {
+      hintNotRunning();
+      return;
+    }
+    if (entry.position === "B") {
+      // Brankář na střídačce = výměna, brankář na ledě = zákrok.
+      if (entry.id !== activeGoalieId) {
+        const previousId = activeGoalieId;
+        setGoalie(entry.id);
+        const label = `Brankář ${playerLabel(entry)} na led`;
+        setUndoStack((stack) => [...stack, { kind: "goalie", previousId, label }]);
+        notify(label);
+        return;
+      }
+      void record({ type: "save", goalieId: entry.id });
+      return;
+    }
+    void record({ type: "shot", playerId: entry.id });
   };
+
+  const onLongPressPlayer = (entry: Participant) => {
+    if (locked) return;
+    if (!canRecord) {
+      hintNotRunning();
+      return;
+    }
+    setDialog({ kind: "penalty", playerId: entry.id });
+  };
+
+  /* ----------------------------------------------------------- značky třetin */
+
+  const onPeriodMark = async () => {
+    if (locked) return;
+    if (state.phase === "running" && state.running) {
+      await record({ type: "period_end", period: state.running });
+      return;
+    }
+    if (state.next) await record({ type: "period_start", period: state.next });
+  };
+
+  /* ---------------------------------------------------------------- dialogy */
 
   const saveGoal = async (mode: "for" | "against", draft: GoalDraft, editing: MatchEvent | null) => {
     if (editing) {
@@ -206,8 +345,9 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       });
       onChanged();
       await reload();
+      notify("Gól upraven", false);
     } else {
-      await addEvent({
+      await record({
         type: mode === "for" ? "goal_for" : "goal_against",
         clock: draft.clock,
         playerId: draft.playerId,
@@ -218,6 +358,18 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
         strength: draft.strength,
       });
     }
+    setDialog(null);
+  };
+
+  const savePenalty = async (draft: PenaltyDraft) => {
+    await record({
+      type: "penalty",
+      side: draft.side,
+      playerId: draft.playerId,
+      clock: draft.clock,
+      penaltyCode: draft.penaltyCode,
+      penaltyMin: draft.penaltyMin,
+    });
     setDialog(null);
   };
 
@@ -249,6 +401,28 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     await patchMatch({ status: "finished" });
   };
 
+  /* ------------------------------------------------- lišta: co právě běží */
+
+  /** Početní stav k času posledního zapsaného gólu nebo trestu v téhle třetině.
+   *  Aplikace nemá časomíru, takže „teď“ neví – nejbližší známý okamžik je
+   *  poslední zápis. */
+  const strengthLine = useMemo<StrengthLine | null>(() => {
+    const reference = latestTimedEvent(events, period);
+    if (reference === null) return null;
+    const suggestion = strengthAt(events, period, reference);
+    if (suggestion.strength === "ev") return null;
+    const running = suggestion.strength === "pp" ? suggestion.theirs : suggestion.ours;
+    const first = running[0];
+    if (!first) return null;
+    const who = suggestion.strength === "pp" ? "soupeř" : nameOf(first.playerId) || "my";
+    const extra = running.length > 1 ? ` (+${running.length - 1} další)` : "";
+    return {
+      label: suggestion.strength === "pp" ? "Přesilovka" : "Oslabení",
+      detail: `${who} ${first.code}, ${describePenaltyEnd(first.endsAt, period, countsDown)}${extra}`,
+      tone: suggestion.strength,
+    };
+  }, [events, period, nameOf, countsDown]);
+
   if (!match) {
     return (
       <div className="card p-10 text-center text-slate-400">
@@ -266,203 +440,120 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
   const weAreHome = match.homeAway === "home";
   const shotsHome = weAreHome ? totals.totalShotsFor : totals.totalShotsAgainst;
   const shotsAway = weAreHome ? totals.totalShotsAgainst : totals.totalShotsFor;
+  const timesTitle = `${homeName} – ${awayName} ${formatDate(match.matchDate)}`;
 
   return (
-    <div className="space-y-4 pb-24">
-      {/* ---------------------------------------------------- záhlaví */}
-      <div className="card p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="btn-ghost no-print" onClick={onBack}>
-            ← Zpět
-          </button>
-          <div className="text-sm text-slate-400">
-            {match.matchDate}
-            {match.venue && ` • ${match.venue}`}
-            {match.competition && ` • ${match.competition}`}
-          </div>
-          {locked && <span className="chip bg-white/10 text-slate-300">Uzamčeno</span>}
-          <div className="no-print ml-auto flex flex-wrap gap-2">
-            <button className="btn-ghost" onClick={() => setDialog({ kind: "lineup" })}>
-              🧩 Sestava
-            </button>
-            <button
-              className="btn-ghost"
-              onClick={() =>
-                void import("../lib/exports").then((m) =>
-                  m.exportMatchStatsXlsx(match, events, statsParticipants),
-                )
-              }
-            >
-              📤 XLSX
-            </button>
-            <button
-              className="btn-ghost"
-              onClick={() =>
-                void import("../lib/exports").then((m) =>
-                  m.exportEventsCsv(match, events, participantMap),
-                )
-              }
-            >
-              📄 CSV
-            </button>
-          </div>
-        </div>
+    <div className="space-y-4">
+      {/* ------------------------------------------------- hrací plocha */}
+      <section className="play-area relative flex min-h-0 flex-col gap-2">
+        <MatchTopBar
+          size={size}
+          homeName={homeName}
+          awayName={awayName}
+          score={score}
+          shotsHome={shotsHome}
+          shotsAway={shotsAway}
+          state={state}
+          manualPeriod={manualPeriod}
+          onManualPeriod={setManualPeriod}
+          onPeriodMark={() => void onPeriodMark()}
+          strengthLine={strengthLine}
+          onOpenTimes={() => setDialog({ kind: "times" })}
+          locked={Boolean(locked)}
+        />
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-          <div className="truncate text-right text-lg font-semibold sm:text-xl">{homeName}</div>
-          <div className="text-center">
-            <div className="text-5xl font-black tabular-nums">
-              {score.home}
-              <span className="mx-2 text-slate-600">:</span>
-              {score.away}
-            </div>
-            <div className="mt-1 text-xs text-slate-400 tabular-nums">
-              {score.perPeriod.map(([h, a], i) => (
-                <span key={i} className="mx-1">
-                  {h}:{a}
-                </span>
-              ))}
-            </div>
-            {match.shootoutWinner && (
-              <div className="mt-1 text-xs text-amber-300">
-                po nájezdech {match.shootoutWinner === "us" ? "pro nás" : "pro soupeře"}
-              </div>
-            )}
-          </div>
-          <div className="truncate text-lg font-semibold sm:text-xl">{awayName}</div>
-        </div>
+        <PlayerGrid
+          participants={participants}
+          countOf={(entry) => {
+            const s = byPlayer[entry.id];
+            if (!s) return 0;
+            return entry.position === "B" ? sumCounts(s.saves) : sumCounts(s.shots);
+          }}
+          size={size}
+          disabled={Boolean(locked)}
+          inactive={!canRecord}
+          activeGoalieId={activeGoalieId}
+          onTap={onTapPlayer}
+          onLongPress={onLongPressPlayer}
+        />
 
-        <div className="mt-3 border-t border-white/10 pt-3 text-center text-sm text-slate-400">
-          Střely{" "}
-          <strong className="text-slate-200 tabular-nums">
-            {shotsHome}:{shotsAway}
-          </strong>
-          <span className="mx-2 text-slate-600">|</span>
-          Gól se počítá i jako střela
-        </div>
-      </div>
-
-      {/* ------------------------------------------------ ovládání */}
-      <div className="no-print card space-y-3 p-4">
-        <div className="flex flex-wrap gap-2">
-          {(["1", "2", "3", "P"] as const).map((p) => (
-            <button
-              key={p}
-              disabled={locked}
-              className={`flex-1 rounded-xl px-3 py-3 text-sm font-bold transition ${
-                period === p ? "bg-ice-500 text-white" : "bg-white/5 text-slate-300"
-              } disabled:opacity-40`}
-              onClick={() => setPeriod(p)}
-            >
-              {PERIOD_SHORT[p]}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-500 uppercase">Pětka</span>
+        {/* ------------------------------------------- spodní lišta */}
+        <div className="flex shrink-0 gap-2">
           <button
-            className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-              lineFilter === 0 ? "bg-white/15 text-white" : "bg-white/5 text-slate-400"
-            }`}
-            onClick={() => setLineFilter(0)}
+            className="btn-success flex-1 py-3 text-base"
+            disabled={!canRecord}
+            onClick={() => setDialog({ kind: "goal", mode: "for", editing: null })}
           >
-            Vše
+            Gól
           </button>
-          {availableLines.map((line) => (
-            <button
-              key={line}
-              className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                lineFilter === line ? `${lineColor(line, false)} text-white` : "bg-white/5 text-slate-400"
-              }`}
-              onClick={() => setLineFilter(line)}
-            >
-              {line}.
-            </button>
-          ))}
-
-          <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
-            Brankář na ledě
-            <select
-              className="field !w-auto !py-1.5"
-              value={activeGoalieId ?? ""}
-              onChange={(e) => {
-                const value = e.target.value || null;
-                setActiveGoalieId(value);
-                if (value) localStorage.setItem(goalieKey(matchId), value);
-                else localStorage.removeItem(goalieKey(matchId));
-              }}
-            >
-              <option value="">— nevybrán —</option>
-              {participants
-                .filter((p) => p.position === "B")
-                .map((p) => (
-                  <option key={p.rosterId} value={p.id}>
-                    {playerLabel(p)}
-                  </option>
-                ))}
-            </select>
-          </label>
+          <button
+            className="btn-danger flex-1 py-3 text-base"
+            disabled={!canRecord}
+            onClick={() => setDialog({ kind: "goal", mode: "against", editing: null })}
+          >
+            {size === "cover" ? "Obdržený" : "Obdržený gól"}
+          </button>
+          <button
+            className="btn-ghost flex-1 py-3 text-base"
+            disabled={!canRecord}
+            onClick={() => setDialog({ kind: "penalty", playerId: null })}
+          >
+            Trest
+          </button>
+          <button
+            className="btn-ghost flex-[1.4] py-3 text-left text-sm"
+            disabled={locked || !undoLabel}
+            onClick={() => void undo()}
+          >
+            <span className="font-bold">Vrátit</span>
+            {undoLabel && (
+              <span className="ml-2 truncate text-xs text-slate-400">· {undoLabel}</span>
+            )}
+          </button>
         </div>
-      </div>
 
-      {/* -------------------------------------------------- dlaždice */}
-      <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
-        {visibleParticipants.map((entry) => {
-          const s = byPlayer[entry.id];
-          const isGoalie = entry.position === "B";
-          return (
-            <PlayerTile
-              key={entry.rosterId}
-              participant={entry}
-              count={s ? (isGoalie ? sumCounts(s.saves) : sumCounts(s.shots)) : 0}
-              disabled={locked}
-              highlighted={isGoalie && activeGoalieId === entry.id}
-              onTap={() => onTapPlayer(entry)}
-              onLongPress={() => setDialog({ kind: "penalty", playerId: entry.id })}
-            />
-          );
-        })}
-      </div>
+        <Toast toast={toast} onUndo={() => void undo()} onClose={closeToast} />
+      </section>
 
-      {/* --------------------------------------------------- akce */}
-      <div className="no-print flex flex-wrap gap-2">
-        <button
-          className="btn-success min-w-36 flex-1 py-4 text-base"
-          disabled={locked}
-          onClick={() => setDialog({ kind: "goal", mode: "for", editing: null })}
-        >
-          🥅 Gól
+      {/* --------------------------------------------- pod hrací plochou */}
+      <div className="no-print card flex flex-wrap items-center gap-2 p-3 text-sm">
+        <button className="btn-ghost" onClick={onBack}>
+          ← Přehled zápasů
         </button>
-        <button
-          className="btn-danger min-w-36 flex-1 py-4 text-base"
-          disabled={locked}
-          onClick={() => setDialog({ kind: "goal", mode: "against", editing: null })}
-        >
-          💥 Obdržený
-        </button>
-        <button
-          className="btn-ghost min-w-36 flex-1 py-4 text-base"
-          disabled={locked}
-          onClick={() => setDialog({ kind: "shootout" })}
-        >
-          ⚔️ Nájezdy
-        </button>
-        <button
-          className="btn-ghost min-w-36 flex-1 py-4 text-base"
-          disabled={locked}
-          onClick={() => setDialog({ kind: "oppPenalty" })}
-          title="Trest soupeře – kvůli počtu přesilovek"
-        >
-          ⚠️ Trest soupeře
-        </button>
-        <button
-          className="btn-ghost min-w-36 flex-1 py-4 text-base"
-          disabled={locked || liveEventsList.length === 0}
-          onClick={() => void undoLast()}
-        >
-          ↩︎ Zpět
-        </button>
+        <span className="text-slate-400">
+          {match.matchDate}
+          {match.venue && ` • ${match.venue}`}
+          {match.competition && ` • ${match.competition}`}
+        </span>
+        {locked && <span className="chip bg-white/10 text-slate-300">Uzamčeno</span>}
+        <div className="ml-auto flex flex-wrap gap-2">
+          <button className="btn-ghost" onClick={() => setDialog({ kind: "lineup" })}>
+            Sestava
+          </button>
+          <button className="btn-ghost" onClick={() => setDialog({ kind: "shootout" })}>
+            Nájezdy
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() =>
+              void import("../lib/exports").then((m) =>
+                m.exportMatchStatsXlsx(match, events, statsParticipants),
+              )
+            }
+          >
+            XLSX
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() =>
+              void import("../lib/exports").then((m) =>
+                m.exportEventsCsv(match, events, participantMap),
+              )
+            }
+          >
+            CSV
+          </button>
+        </div>
       </div>
 
       {/* -------------------------------------------------- události */}
@@ -473,7 +564,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
         </h3>
         {liveEventsList.length === 0 ? (
           <p className="px-4 py-6 text-center text-sm text-slate-500">
-            Zatím žádná událost. Ťukněte na hráče pro střelu, dlouhým stiskem zapíšete trest.
+            Zatím žádná událost. Ťuknutí na hráče zapíše střelu, podržení trest.
           </p>
         ) : (
           <ul className="divide-y divide-white/5">
@@ -482,6 +573,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
                 key={e.clientId}
                 event={e}
                 players={playerMap}
+                participants={participantMap}
                 locked={Boolean(locked)}
                 onEdit={
                   e.type === "goal_for" || e.type === "goal_against"
@@ -516,7 +608,7 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       {locked && (
         <div className="no-print flex justify-center pt-2">
           <button className="btn-ghost" onClick={() => void patchMatch({ status: "live" })}>
-            🔓 Odemknout k dodatečné úpravě
+            Odemknout k dodatečné úpravě
           </button>
         </div>
       )}
@@ -527,7 +619,10 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
           mode={dialog.mode}
           period={dialog.editing?.period ?? period}
           participants={participants}
+          events={events}
           activeGoalieId={activeGoalieId}
+          venue={match.venue}
+          size={size}
           editing={dialog.editing}
           onClose={() => setDialog(null)}
           onSave={(draft) => void saveGoal(dialog.mode, draft, dialog.editing)}
@@ -536,28 +631,21 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
 
       {dialog?.kind === "penalty" && (
         <PenaltyDialog
-          player={participantMap.get(dialog.playerId)}
+          period={period}
+          participants={participants}
+          preselectedPlayerId={dialog.playerId}
+          venue={match.venue}
+          size={size}
           onClose={() => setDialog(null)}
-          onSave={(clock, minutes) => {
-            void addEvent({
-              type: "penalty",
-              playerId: dialog.playerId,
-              clock,
-              penaltyMin: minutes,
-              side: "us",
-            });
-            setDialog(null);
-          }}
+          onSave={(draft) => void savePenalty(draft)}
         />
       )}
 
-      {dialog?.kind === "oppPenalty" && (
-        <OpponentPenaltyDialog
+      {dialog?.kind === "times" && (
+        <PeriodTimesPanel
+          title={timesTitle}
+          spans={state.spans}
           onClose={() => setDialog(null)}
-          onSave={(minutes) => {
-            void addEvent({ type: "penalty", playerId: null, side: "opp", penaltyMin: minutes });
-            setDialog(null);
-          }}
         />
       )}
 
@@ -603,22 +691,41 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
   );
 }
 
+type RosterEntryList = Awaited<ReturnType<typeof rosterOfMatch>>;
+
+/** Nejpozdější gól nebo trest s časem v dané třetině. */
+function latestTimedEvent(events: MatchEvent[], period: Period): number | null {
+  let latest: number | null = null;
+  for (const event of events) {
+    if (event.deleted || event.period !== period) continue;
+    if (event.type !== "goal_for" && event.type !== "goal_against" && event.type !== "penalty")
+      continue;
+    const sec = clockToSeconds(event.clock);
+    if (sec === null) continue;
+    latest = latest === null ? sec : Math.max(latest, sec);
+  }
+  return latest;
+}
+
 /* ------------------------------------------------------------ řádek události */
 
 function EventRow({
   event,
   players,
+  participants,
   locked,
   onEdit,
   onDelete,
 }: {
   event: MatchEvent;
   players: Map<string, Player>;
+  participants: Map<string, Participant>;
   locked: boolean;
   onEdit?: () => void;
   onDelete: () => void;
 }) {
-  const name = (id: string | null) => (id ? playerNumber(players.get(id)) : "?");
+  const name = (id: string | null) =>
+    id ? playerNumber(participants.get(id) ?? players.get(id)) : "?";
   const period = PERIOD_SHORT[event.period] ?? event.period;
 
   const strengthTag =
@@ -660,8 +767,7 @@ function EventRow({
       text = (
         <>
           <strong>Obdržený gól</strong>
-          {strengthTag}{" "}
-          <span className="text-slate-400">B: #{name(event.goalieId)}</span>
+          {strengthTag} <span className="text-slate-400">B: #{name(event.goalieId)}</span>
           {event.onIceMinus.length > 0 && (
             <span className="text-rose-300/80">
               {" "}
@@ -677,7 +783,11 @@ function EventRow({
         <>
           <strong>{event.side === "opp" ? "Trest soupeře" : "Trest"}</strong>
           {event.side !== "opp" && <> #{name(event.playerId)}</>}
-          {event.penaltyMin ? <span className="text-slate-400"> ({event.penaltyMin} min)</span> : null}
+          <span className="text-slate-400">
+            {" "}
+            ({event.penaltyCode ?? "?"}
+            {event.penaltyMin ? `, ${event.penaltyMin} TM` : ""})
+          </span>
         </>
       );
       break;
@@ -686,6 +796,24 @@ function EventRow({
       break;
     case "save":
       text = <span className="text-slate-300">Zákrok #{name(event.goalieId)}</span>;
+      break;
+    case "period_start":
+      accent = "bg-ice-500/10";
+      text = (
+        <>
+          <strong>Buly – {period}</strong>{" "}
+          <span className="text-slate-400 tabular-nums">{formatTimeOfDay(event.recordedAt)}</span>
+        </>
+      );
+      break;
+    case "period_end":
+      accent = "bg-ice-500/10";
+      text = (
+        <>
+          <strong>Konec {period}</strong>{" "}
+          <span className="text-slate-400 tabular-nums">{formatTimeOfDay(event.recordedAt)}</span>
+        </>
+      );
       break;
     case "so_attempt":
       accent = "bg-violet-500/10";
@@ -714,103 +842,15 @@ function EventRow({
         <span className="no-print flex shrink-0 gap-1">
           {onEdit && (
             <button className="btn-ghost !px-2 !py-1" onClick={onEdit} title="Upravit">
-              ✏️
+              Upravit
             </button>
           )}
           <button className="btn-ghost !px-2 !py-1" onClick={onDelete} title="Smazat">
-            🗑️
+            Smazat
           </button>
         </span>
       )}
     </li>
-  );
-}
-
-/* ----------------------------------------------------------------- trest */
-
-function PenaltyDialog({
-  player,
-  onClose,
-  onSave,
-}: {
-  player: Participant | undefined;
-  onClose: () => void;
-  onSave: (clock: string | null, minutes: number) => void;
-}) {
-  const [clock, setClock] = useState("");
-  const [minutes, setMinutes] = useState(2);
-
-  return (
-    <Modal
-      title={"Trest – " + playerLabel(player)}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn-ghost" onClick={onClose}>
-            Zrušit
-          </button>
-          <button className="btn-primary" onClick={() => onSave(normalizeClock(clock), minutes)}>
-            💾 Zapsat trest
-          </button>
-        </>
-      }
-    >
-      <div className="mb-4 flex gap-2">
-        {[2, 5, 10].map((m) => (
-          <button
-            key={m}
-            className={`flex-1 rounded-xl py-3 font-bold transition ${
-              minutes === m ? "bg-amber-600 text-white" : "bg-white/5 text-slate-300"
-            }`}
-            onClick={() => setMinutes(m)}
-          >
-            {m} min
-          </button>
-        ))}
-      </div>
-      <TimeInput value={clock} onChange={setClock} />
-    </Modal>
-  );
-}
-
-/* ------------------------------------------- trest soupeře */
-
-/** Od trestu soupeře potřebujeme jen to, že byl, a jak dlouhý – je to
- *  jmenovatel úspěšnosti přesilovek. Kdo ho dostal ani kdy nesledujeme,
- *  protože gól už si sám nese informaci, že padl v přesilovce. */
-function OpponentPenaltyDialog({
-  onClose,
-  onSave,
-}: {
-  onClose: () => void;
-  onSave: (minutes: number) => void;
-}) {
-  return (
-    <Modal
-      title="Trest soupeře"
-      subtitle="Vyberte délku – tím se rovnou uloží."
-      onClose={onClose}
-      footer={
-        <button className="btn-ghost" onClick={onClose}>
-          Zrušit
-        </button>
-      }
-    >
-      <div className="flex gap-2">
-        {[2, 5, 10].map((m) => (
-          <button
-            key={m}
-            className="tap-target flex-1 rounded-2xl bg-amber-600 py-8 text-xl font-bold text-white transition active:scale-95"
-            onClick={() => onSave(m)}
-          >
-            {m} min
-          </button>
-        ))}
-      </div>
-      <p className="mt-3 text-center text-xs text-slate-500">
-        Zapisuje se jen kvůli počtu přesilovek – hráč ani čas nejsou potřeba.
-      </p>
-    </Modal>
   );
 }
 
@@ -854,6 +894,7 @@ function PlayerDetail({
           {row("Časy gólů", times(stats.goals))}
           {row("Časy obdržených", times(stats.goalsAgainst))}
           {row("Tresty", times(stats.penalties))}
+          {row("Trestné minuty", stats.pim)}
           {stats.soAttempts > 0 && row("Nájezdy", `${stats.soGoals}/${stats.soAttempts}`)}
         </div>
       )}

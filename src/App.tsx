@@ -63,8 +63,10 @@ export default function App() {
   if (!signedIn) return <Login />;
 
   return (
-    <div className="min-h-dvh">
-      <header className="no-print sticky top-0 z-30 border-b border-white/10 bg-night-950/85 backdrop-blur">
+    // Pevná výška a rolování až v <main>: obrazovka zápasu tak dostane přesně
+    // zbylou výšku okna a dá se postavit bez rolování během hry.
+    <div className="flex h-dvh flex-col">
+      <header className="no-print shrink-0 border-b border-white/10 bg-night-950/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
           <button
             className="text-left text-base font-bold tracking-tight"
@@ -94,7 +96,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-4">
+      <main className="mx-auto min-h-0 w-full max-w-6xl flex-1 overflow-y-auto px-3 py-2 sm:px-4 sm:py-4">
         {screen.name === "list" && (
           <MatchList players={players} onOpen={openMatch} onChanged={notifyLocalChange} />
         )}

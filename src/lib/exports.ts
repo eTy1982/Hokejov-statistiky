@@ -2,7 +2,8 @@
 import * as XLSX from "xlsx";
 import { computeStats, savePercentage, scoreboard, sumCounts, sumTimes } from "./stats";
 import { PERIODS, type Match, type MatchEvent, type Participant } from "./types";
-import { PERIOD_SHORT, playerLabel } from "./format";
+import { PERIOD_LABEL, PERIOD_SHORT, formatTimeOfDay, playerLabel } from "./format";
+import { periodState, spanMinutes } from "./periods";
 
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -63,6 +64,7 @@ export function exportMatchStatsXlsx(
     record["Plus"] = s ? sumCounts(s.plus) : 0;
     record["Minus"] = s ? sumCounts(s.minus) : 0;
     record["Tresty"] = s ? sumTimes(s.penalties) : 0;
+    record["TM"] = s ? s.pim : 0;
     record["Zákroky"] = s ? sumCounts(s.saves) : 0;
     record["Obdržené"] = s ? sumTimes(s.goalsAgainst) : 0;
     record["SV%"] = sv === null ? "" : Number(sv.toFixed(1));
@@ -76,6 +78,21 @@ export function exportMatchStatsXlsx(
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, "Statistiky");
+
+  // Časy třetin ve skutečném čase – podklad pro kondičního trenéra (Catapult).
+  const { spans } = periodState(events);
+  if (spans.length) {
+    const timeRows = spans.map((span) => ({
+      Třetina: PERIOD_LABEL[span.period] ?? span.period,
+      Začátek: formatTimeOfDay(span.start),
+      Konec: span.end ? formatTimeOfDay(span.end) : "",
+      "Délka (min)": spanMinutes(span) ?? "",
+    }));
+    const timeSheet = XLSX.utils.json_to_sheet(timeRows);
+    timeSheet["!cols"] = [{ wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(book, timeSheet, "Časy třetin");
+  }
+
   XLSX.writeFile(book, `statistiky_${safeName(match.matchDate)}.xlsx`);
 }
 
@@ -151,14 +168,17 @@ export function exportEventsCsv(
       Asistence: e.assists.map(label).join(" / "),
       Plus: e.onIcePlus.map((id) => number(id)).join(" "),
       Minus: e.onIceMinus.map((id) => number(id)).join(" "),
+      TrestKod: e.penaltyCode ?? "",
       TrestMin: e.penaltyMin ?? "",
+      SkutecnyCas: e.recordedAt ?? "",
       NajezdVysledek: e.soResult ?? "",
       NajezdKolo: e.soRound ?? "",
     }));
 
   const headers = [
     "Poradi", "Tretina", "Cas", "Udalost", "Cislo", "Hrac", "Brankar",
-    "Asistence", "Plus", "Minus", "TrestMin", "NajezdVysledek", "NajezdKolo",
+    "Asistence", "Plus", "Minus", "TrestKod", "TrestMin", "SkutecnyCas",
+    "NajezdVysledek", "NajezdKolo",
   ];
 
   // BOM je nutné, jinak Excel v češtině rozsype diakritiku.

@@ -1,4 +1,5 @@
-import type { Participant, Player, Position } from "./types";
+import { elapsedToBoard, fromAbsolute } from "./clock";
+import type { Participant, Period, Player, Position } from "./types";
 
 /** Cokoli, co má jméno a číslo – kmenový hráč i účastník zápasu. */
 type Named = { fullName: string; jerseyNumber: number | null };
@@ -103,6 +104,40 @@ export const PERIOD_LABEL: Record<string, string> = {
   P: "Prodloužení",
   SO: "Nájezdy",
 };
+
+/** „ve 2. třetině“ – předložka se u číslovek mění, proto natvrdo. */
+export const PERIOD_IN: Record<string, string> = {
+  "1": "v 1. třetině",
+  "2": "ve 2. třetině",
+  "3": "ve 3. třetině",
+  P: "v prodloužení",
+  SO: "v nájezdech",
+};
+
+/** „konec na tabuli 10:30“ – kdy trest skončí, převedené do formátu tabule.
+ *  Když přechází do další třetiny, řekne to: zapisovatel se pak na tabuli
+ *  dívá marně. */
+export function describePenaltyEnd(
+  endsAtAbsolute: number,
+  currentPeriod: Period,
+  countsDown: boolean,
+): string {
+  const { period, sec } = fromAbsolute(endsAtAbsolute);
+  const board = elapsedToBoard(sec, period, countsDown);
+  return period === currentPeriod
+    ? `konec na tabuli ${board}`
+    : `konec ${PERIOD_IN[period] ?? ""} na tabuli ${board}`;
+}
+
+/** Skutečný čas na hodinách, `18:58:40`. Značky třetin ho nesou v ISO. */
+export function formatTimeOfDay(iso: string | null, withSeconds = true): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  const two = (n: number) => String(n).padStart(2, "0");
+  const base = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  return withSeconds ? `${base}:${two(date.getSeconds())}` : base;
+}
 
 export const PERIOD_SHORT: Record<string, string> = {
   "1": "1. tř.",
