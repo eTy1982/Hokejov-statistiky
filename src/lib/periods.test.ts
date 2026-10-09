@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { periodState, spanMinutes } from "./periods";
+import { periodState, periodTimesText, spanMinutes } from "./periods";
 import { makeEvent, type MatchEvent, type RegularPeriod } from "./types";
 
 const M = "match-1";
@@ -104,6 +104,19 @@ describe("periodState", () => {
     expect(stav.next).toBe("1");
   });
 
+  it("dvojí ťuknutí na buly nerozdvojí třetinu", () => {
+    const stav = periodState([
+      mark("period_start", "1", "17:00:00"),
+      mark("period_start", "1", "17:00:02"),
+      mark("period_end", "1", "17:28:00"),
+    ]);
+    expect(stav.phase).toBe("break");
+    expect(stav.next).toBe("2");
+    expect(stav.spans).toHaveLength(1);
+    // Platí první ťuknutí – to je skutečný čas vhazování.
+    expect(stav.spans[0]!.start).toBe("2026-10-07T17:00:00.000Z");
+  });
+
   it("konec bez začátku nemá co uzavřít", () => {
     const stav = periodState([mark("period_end", "1", "17:28:00")]);
     expect(stav.spans).toEqual([]);
@@ -117,6 +130,19 @@ describe("periodState", () => {
       mark("period_end", "1", "17:28:00"),
     ];
     expect(periodState([...marks].reverse())).toEqual(periodState(marks));
+  });
+
+  it("sestaví text ke zkopírování i s rozehranou třetinou", () => {
+    const stav = periodState([
+      mark("period_start", "1", "17:00:00"),
+      mark("period_end", "1", "17:28:30"),
+      mark("period_start", "2", "17:45:00"),
+    ]);
+    const text = periodTimesText("Dynamo B – Litoměřice 7. 10. 2026", stav.spans);
+    const radky = text.split("\n");
+    expect(radky[0]).toBe("Dynamo B – Litoměřice 7. 10. 2026");
+    expect(radky[1]).toMatch(/^1\. třetina: \d{2}:\d{2}:\d{2} – \d{2}:\d{2}:\d{2} \(29 min\)$/);
+    expect(radky[2]).toMatch(/^2\. třetina: \d{2}:\d{2}:\d{2} – běží$/);
   });
 
   it("značky nájezdů stav třetin neovlivní", () => {

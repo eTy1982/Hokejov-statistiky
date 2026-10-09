@@ -15,7 +15,11 @@
   --color-night-900: #0b1220;
   --color-night-950: #070c16;
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  /* Barlow pro rozhraní, Barlow Condensed pro čísla a jména na dlaždicích –
+     úzké písmo udrží celé příjmení („Pochobradský“) bez ořezání. Oboje je
+     zabalené v aplikaci, viz main.tsx. */
+  --font-sans: "Barlow", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-condensed: "Barlow Condensed", "Barlow", ui-sans-serif, system-ui, sans-serif;
   --radius-xl2: 1rem;
 }
 
@@ -85,6 +89,17 @@
 
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold;
+  }
+
+  /* Hrací plocha obrazovky zápasu: okno bez záhlaví aplikace a odsazení <main>.
+     Během hry se tím vejde celá bez rolování – průběh a tabulka zůstávají pod ní. */
+  .play-area {
+    height: calc(100dvh - 5.25rem);
+  }
+  @media (min-width: 640px) {
+    .play-area {
+      height: calc(100dvh - 6.25rem);
+    }
   }
 }
 

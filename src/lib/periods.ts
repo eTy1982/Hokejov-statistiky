@@ -6,6 +6,7 @@
  *  Zápasy zapsané před touhle změnou značky nemají (`hasMarks === false`);
  *  tam se třetina pořád vybírá ručně, aby šly dodatečně opravit.
  */
+import { PERIOD_LABEL, formatTimeOfDay } from "./format";
 import { PERIODS, type MatchEvent, type RegularPeriod } from "./types";
 
 export type MatchPhase = "pre" | "running" | "break";
@@ -49,13 +50,15 @@ export function periodState(events: MatchEvent[]): PeriodState {
 
   const spans: PeriodSpan[] = [];
   for (const mark of marks) {
+    const open = [...spans].reverse().find((span) => span.end === null);
     if (mark.type === "period_start") {
-      spans.push({ period: mark.period, start: mark.recordedAt, end: null });
+      // Běžet může jen jedna třetina. Druhé buly je překlep (dvojí ťuknutí) –
+      // platí to první, protože nese skutečný čas vhazování. Nadbytečnou
+      // značku smaže Vrátit.
+      if (!open) spans.push({ period: mark.period, start: mark.recordedAt, end: null });
       continue;
     }
-    // Konec uzavře poslední otevřenou třetinu. Konec bez začátku (vrácené buly)
-    // nemá co uzavřít a zahodí se.
-    const open = [...spans].reverse().find((span) => span.end === null);
+    // Konec bez začátku (vrácené buly) nemá co uzavřít a zahodí se.
     if (open) open.end = mark.recordedAt;
   }
 
@@ -105,4 +108,17 @@ export function spanMinutes(span: PeriodSpan): number | null {
   const to = Date.parse(span.end);
   if (Number.isNaN(from) || Number.isNaN(to)) return null;
   return Math.round((to - from) / 60000);
+}
+
+/** Text ke zkopírování kondičnímu trenérovi. Jednotky z Catapultu běží ve
+ *  skutečném čase, takže potřebuje hodiny, ne odehraný čas. */
+export function periodTimesText(title: string, spans: PeriodSpan[]): string {
+  const lines = spans.map((span) => {
+    const name = PERIOD_LABEL[span.period] ?? span.period;
+    const minutes = spanMinutes(span);
+    const end = span.end ? formatTimeOfDay(span.end) : "běží";
+    const length = minutes === null ? "" : ` (${minutes} min)`;
+    return `${name}: ${formatTimeOfDay(span.start)} – ${end}${length}`;
+  });
+  return [title, ...lines].join("\n");
 }
