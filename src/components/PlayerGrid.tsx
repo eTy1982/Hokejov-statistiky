@@ -2,22 +2,26 @@ import { useMemo } from "react";
 import type { Participant } from "../lib/types";
 import { playerRows, type PlayerRow } from "../lib/playerRows";
 import type { LayoutSize } from "../hooks/useLayoutSize";
-import { PlayerTile, type GoalieRole } from "./PlayerTile";
+import { PlayerTile } from "./PlayerTile";
 
 interface Props {
   participants: Participant[];
-  /** Hlavní počítadlo na dlaždici – střely u hráčů, zákroky u brankářů. */
+  /** Hlavní počítadlo na dlaždici – střely hráče. */
   countOf: (participant: Participant) => number;
   size: LayoutSize;
   disabled?: boolean;
   /** Třetina neběží – ztlumit, ale ťuknutí pustit dál. */
   inactive?: boolean;
-  activeGoalieId: string | null;
   onTap: (participant: Participant) => void;
   onLongPress: (participant: Participant) => void;
 }
 
 /** Dlaždice hráčů na obrazovce zápasu: obrany vlevo (2fr), útoky vpravo (3fr).
+ *
+ *  Brankáři v mřížce nejsou – mají vlastní lištu nad spodními tlačítky. Díky
+ *  tomu stojí O1 vedle Ú1, O2 vedle Ú2 a oko hledá v jedné výšce. Kratší
+ *  sloupec se dorovná prázdným řádkem.
+ *
  *  Řádky se rozdělí o zbylou výšku, takže se obrazovka neroluje. */
 export function PlayerGrid({
   participants,
@@ -25,11 +29,13 @@ export function PlayerGrid({
   size,
   disabled,
   inactive,
-  activeGoalieId,
   onTap,
   onLongPress,
 }: Props) {
-  const { left, right } = useMemo(() => playerRows(participants), [participants]);
+  const { left, right } = useMemo(
+    () => playerRows(participants, { includeGoalies: false, balance: true }),
+    [participants],
+  );
   const showLabels = size !== "cover";
 
   const column = (rows: PlayerRow[], span: string) => (
@@ -53,7 +59,6 @@ export function PlayerGrid({
                 size={size}
                 disabled={disabled}
                 inactive={inactive}
-                goalieRole={goalieRoleOf(player, activeGoalieId)}
                 onTap={() => onTap(player)}
                 onLongPress={() => onLongPress(player)}
               />
@@ -70,9 +75,4 @@ export function PlayerGrid({
       {column(right, "col-span-3")}
     </div>
   );
-}
-
-function goalieRoleOf(player: Participant, activeGoalieId: string | null): GoalieRole | undefined {
-  if (player.position !== "B") return undefined;
-  return player.id === activeGoalieId ? "ice" : "bench";
 }

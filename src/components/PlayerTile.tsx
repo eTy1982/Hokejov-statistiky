@@ -1,17 +1,11 @@
-import { useRef } from "react";
 import type { Participant } from "../lib/types";
 import type { LayoutSize } from "../hooks/useLayoutSize";
+import { useLongPress } from "../hooks/useLongPress";
 import { lineColor, playerNumber, surname } from "../lib/format";
-
-const LONG_PRESS_MS = 550;
-
-/** Role brankáře v zápase – druhý brankář je vidět, ale ztlumený, a ťuk na něj
- *  znamená výměnu, ne zákrok. */
-export type GoalieRole = "ice" | "bench";
 
 interface Props {
   participant: Participant;
-  /** Hlavní počítadlo na dlaždici – střely u hráčů, zákroky u brankářů. */
+  /** Hlavní počítadlo na dlaždici – střely hráče. */
   count: number;
   size: LayoutSize;
   /** Uzamčený zápas – dlaždice nereaguje vůbec. */
@@ -19,7 +13,6 @@ interface Props {
   /** Třetina neběží – dlaždice je ztlumená, ale ťuk projde, aby šlo
    *  zapisovateli říct proč se nic nezapsalo. */
   inactive?: boolean;
-  goalieRole?: GoalieRole;
   onTap: () => void;
   onLongPress: () => void;
 }
@@ -32,55 +25,18 @@ const METRICS: Record<LayoutSize, { number: string; name: string; gap: string; p
   cover: { number: "text-[25px]", name: "text-[12px]", gap: "gap-[5px]", pad: "py-2" },
 };
 
-/** Dlaždice hráče: krátký stisk = střela/zákrok, dlouhý = trest.
- *
- *  Oproti předchozí verzi tu není žádná globální ochrana proti dvojkliku –
- *  ta zahazovala rychlé kliky na různé hráče. Dvojité započtení řeší to, že
- *  akce visí na `pointerup` téže dlaždice. */
+/** Dlaždice hráče: krátký stisk = střela, dlouhý = trest. */
 export function PlayerTile({
   participant,
   count,
   size,
   disabled,
   inactive,
-  goalieRole,
   onTap,
   onLongPress,
 }: Props) {
-  const isGoalie = participant.position === "B";
   const metrics = METRICS[size];
-  const timer = useRef<number | null>(null);
-  const longFired = useRef(false);
-
-  const clear = () => {
-    if (timer.current !== null) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-  };
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (disabled) return;
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    longFired.current = false;
-    clear();
-    timer.current = window.setTimeout(() => {
-      longFired.current = true;
-      timer.current = null;
-      navigator.vibrate?.([12, 40, 12]);
-      onLongPress();
-    }, LONG_PRESS_MS);
-  };
-
-  const onPointerUp = () => {
-    if (disabled) return;
-    const wasLong = longFired.current;
-    clear();
-    if (!wasLong) {
-      navigator.vibrate?.(10);
-      onTap();
-    }
-  };
+  const handlers = useLongPress({ onTap, onLongPress, disabled });
 
   return (
     <button
@@ -89,15 +45,9 @@ export function PlayerTile({
       className={`tap-target relative flex h-full w-full flex-col items-center justify-center
                   overflow-hidden rounded-xl border-2 px-1 font-condensed font-bold text-white
                   shadow-md transition active:scale-[0.97] disabled:opacity-40
-                  ${metrics.pad} ${metrics.gap} ${lineColor(participant.line, isGoalie)}
-                  ${goalieRole === "ice" ? "ring-2 ring-emerald-400" : ""}
-                  ${goalieRole === "bench" ? "opacity-60" : ""}
+                  ${metrics.pad} ${metrics.gap} ${lineColor(participant.line, false)}
                   ${inactive ? "opacity-45 grayscale" : ""}`}
-      onPointerDown={onPointerDown}
-      onPointerUp={onPointerUp}
-      onPointerCancel={clear}
-      onPointerLeave={clear}
-      onContextMenu={(e) => e.preventDefault()}
+      {...handlers}
     >
       <span className={`${metrics.number} leading-none tabular-nums`}>
         {playerNumber(participant)}
@@ -106,16 +56,6 @@ export function PlayerTile({
       <span className={`${metrics.name} leading-none font-semibold tracking-tight`}>
         {surname(participant)}
       </span>
-
-      {goalieRole && (
-        <span
-          className={`mt-0.5 rounded px-1 text-[9px] leading-tight font-semibold tracking-wide uppercase ${
-            goalieRole === "ice" ? "bg-emerald-400/30 text-emerald-100" : "bg-white/15 text-white/80"
-          }`}
-        >
-          {goalieRole === "ice" ? "na ledě" : "střídačka"}
-        </span>
-      )}
 
       {participant.isGuest && (
         <span
