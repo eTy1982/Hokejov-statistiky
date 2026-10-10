@@ -14,19 +14,32 @@ export interface PlayerRow {
   label: string;
   /** Dlaždic na řádek. Drží se i u neúplné lajny, aby šířka nepodskakovala. */
   perRow: number;
+  /** Prázdný řádek jen dorovnává výšku sloupce, nic se v něm nevykresluje. */
   players: Participant[];
 }
 
-export function playerRows(participants: Participant[]): {
-  left: PlayerRow[];
-  right: PlayerRow[];
-} {
-  const goalies = participants.filter((p) => p.position === "B");
+export interface PlayerRowOptions {
+  /** Brankáři jako první řádek levého sloupce. Hlavní obrazovka je nechce –
+   *  posouvaly by obrany o řádek dolů, takže O1 nestálo vedle Ú1. Dialogy ano,
+   *  u obdrženého gólu a u trestu se brankář vybírá. */
+  includeGoalies?: boolean;
+  /** Dorovnat oba sloupce na stejný počet řádků, ať jsou lajny v jedné výšce. */
+  balance?: boolean;
+}
+
+export function playerRows(
+  participants: Participant[],
+  options: PlayerRowOptions = {},
+): { left: PlayerRow[]; right: PlayerRow[] } {
+  const { includeGoalies = true, balance = false } = options;
   const left: PlayerRow[] = [];
   const right: PlayerRow[] = [];
 
-  if (goalies.length) {
-    left.push({ key: "B", label: "B", perRow: Math.max(2, goalies.length), players: goalies });
+  if (includeGoalies) {
+    const goalies = participants.filter((p) => p.position === "B");
+    if (goalies.length) {
+      left.push({ key: "B", label: "B", perRow: Math.max(2, goalies.length), players: goalies });
+    }
   }
 
   const linesOf = (position: "O" | "Ú") =>
@@ -57,6 +70,16 @@ export function playerRows(participants: Participant[]): {
 
   const spareF = participants.filter((p) => p.position === "Ú" && p.line === 0);
   if (spareF.length) right.push({ key: "U0", label: "–", perRow: 3, players: spareF });
+
+  if (balance) {
+    const rows = Math.max(left.length, right.length);
+    while (left.length < rows) {
+      left.push({ key: `O-prazdny-${left.length}`, label: "", perRow: 2, players: [] });
+    }
+    while (right.length < rows) {
+      right.push({ key: `U-prazdny-${right.length}`, label: "", perRow: 3, players: [] });
+    }
+  }
 
   return { left, right };
 }

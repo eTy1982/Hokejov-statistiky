@@ -26,6 +26,8 @@ interface Props {
   strengthLine: StrengthLine | null;
   onOpenTimes: () => void;
   locked: boolean;
+  /** Bez brankáře v soupisce nejde začít – nebylo by komu zapsat zákrok. */
+  missingGoalie: boolean;
 }
 
 /** Pevná lišta nad dlaždicemi. Drží skóre, třetinu a jedno tlačítko, kterým
@@ -44,9 +46,11 @@ export function MatchTopBar({
   strengthLine,
   onOpenTimes,
   locked,
+  missingGoalie,
 }: Props) {
   const compact = size === "cover";
   const button = periodButton(state);
+  const blockedByGoalie = button?.kind === "start" && missingGoalie;
 
   const scoreBlock = (
     <div className="flex min-w-0 items-center gap-2">
@@ -104,10 +108,10 @@ export function MatchTopBar({
       className={`shrink-0 font-bold ${button.kind === "end" ? "btn-danger" : "btn-primary"} ${
         compact ? "!px-3 !py-2 text-xs" : "!px-4 !py-2.5"
       }`}
-      disabled={locked}
+      disabled={locked || blockedByGoalie}
       onClick={onPeriodMark}
     >
-      {button.label}
+      {blockedByGoalie ? "Chybí brankář v sestavě" : button.label}
     </button>
   );
 

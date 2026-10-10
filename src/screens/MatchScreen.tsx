@@ -39,6 +39,8 @@ import { strengthAt } from "../lib/strength";
 import { useLayoutSize } from "../hooks/useLayoutSize";
 import { useBoardCountsDown } from "../hooks/useBoardCountsDown";
 import { PlayerGrid } from "../components/PlayerGrid";
+import { GoalieBar } from "../components/GoalieBar";
+import { GoaliePickDialog } from "../components/GoaliePickDialog";
 import { MatchTopBar, type StrengthLine } from "../components/MatchTopBar";
 import { Toast, type ToastState } from "../components/Toast";
 import { GoalDialog, type GoalDraft } from "../components/GoalDialog";
@@ -59,6 +61,7 @@ interface Props {
 type Dialog =
   | { kind: "goal"; mode: "for" | "against"; editing: MatchEvent | null }
   | { kind: "penalty"; playerId: string | null }
+  | { kind: "goaliePick"; reason: "faceoff" | "switch" }
   | { kind: "shootout" }
   | { kind: "player"; playerId: string }
   | { kind: "lineup" }
@@ -177,6 +180,15 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     return [...participants, ...extra];
   }, [participants, playersWithEvents, playerMap, guestMap]);
 
+  const goalies = useMemo(
+    () => participants.filter((p) => p.position === "B"),
+    [participants],
+  );
+  const activeGoalie = activeGoalieId ? participantMap.get(activeGoalieId) : undefined;
+  const goalieSaves = activeGoalieId
+    ? sumCounts(byPlayer[activeGoalieId]?.saves ?? { "1": 0, "2": 0, "3": 0, P: 0 })
+    : 0;
+
   const liveEventsList = useMemo(
     () => events.filter((e) => !e.deleted).sort((a, b) => b.seq - a.seq),
     [events],
@@ -291,19 +303,6 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       hintNotRunning();
       return;
     }
-    if (entry.position === "B") {
-      // Brankář na střídačce = výměna, brankář na ledě = zákrok.
-      if (entry.id !== activeGoalieId) {
-        const previousId = activeGoalieId;
-        setGoalie(entry.id);
-        const label = `Brankář ${playerLabel(entry)} na led`;
-        setUndoStack((stack) => [...stack, { kind: "goalie", previousId, label }]);
-        notify(label);
-        return;
-      }
-      void record({ type: "save", goalieId: entry.id });
-      return;
-    }
     void record({ type: "shot", playerId: entry.id });
   };
 
@@ -316,7 +315,59 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
     setDialog({ kind: "penalty", playerId: entry.id });
   };
 
+  /* ------------------------------------------------------------- brankáři */
+
+  /** Výměna není událost, ale vrátit se musí stejně – proto do zásobníku. */
+  const putGoalieOnIce = useCallback(
+    (goalieId: string) => {
+      if (goalieId === activeGoalieId) return;
+      const previousId = activeGoalieId;
+      const goalie = participantMap.get(goalieId);
+      setGoalie(goalieId);
+      const label = `Na ledě ${playerLabel(goalie)}`;
+      setUndoStack((stack) => [...stack, { kind: "goalie", previousId, label }]);
+      notify(label);
+    },
+    [activeGoalieId, participantMap, setGoalie, notify],
+  );
+
+  const onSwitchGoalie = () => {
+    if (locked || goalies.length < 2) return;
+    // Dva brankáři se přepnou jedním ťukem, u tří a víc se vybírá.
+    if (goalies.length === 2) {
+      const other = goalies.find((g) => g.id !== activeGoalieId);
+      if (other) putGoalieOnIce(other.id);
+      return;
+    }
+    setDialog({ kind: "goaliePick", reason: "switch" });
+  };
+
+  const onOpponentShot = () => {
+    if (locked || !activeGoalieId) return;
+    if (!canRecord) {
+      hintNotRunning();
+      return;
+    }
+    void record({ type: "save", goalieId: activeGoalieId });
+  };
+
+  const onLongPressGoalie = () => {
+    if (locked || !activeGoalieId) return;
+    if (!canRecord) {
+      hintNotRunning();
+      return;
+    }
+    setDialog({ kind: "penalty", playerId: activeGoalieId });
+  };
+
   /* ----------------------------------------------------------- značky třetin */
+
+  const startPeriod = useCallback(
+    async (next: RegularPeriod) => {
+      await record({ type: "period_start", period: next });
+    },
+    [record],
+  );
 
   const onPeriodMark = async () => {
     if (locked) return;
@@ -324,7 +375,15 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
       await record({ type: "period_end", period: state.running });
       return;
     }
-    if (state.next) await record({ type: "period_start", period: state.next });
+    if (!state.next) return;
+    // Soupiska neříká, kdo chytá – oba brankáři mají line = 0. Zeptáme se
+    // jednou, při prvním buly, a výběr rovnou uloží i značku třetiny.
+    if (!activeGoalieId && goalies.length > 1) {
+      setDialog({ kind: "goaliePick", reason: "faceoff" });
+      return;
+    }
+    if (!activeGoalieId && goalies.length === 1) setGoalie(goalies[0]!.id);
+    await startPeriod(state.next);
   };
 
   /* ---------------------------------------------------------------- dialogy */
@@ -460,21 +519,38 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
           strengthLine={strengthLine}
           onOpenTimes={() => setDialog({ kind: "times" })}
           locked={Boolean(locked)}
+          missingGoalie={goalies.length === 0}
         />
 
         <PlayerGrid
           participants={participants}
           countOf={(entry) => {
             const s = byPlayer[entry.id];
-            if (!s) return 0;
-            return entry.position === "B" ? sumCounts(s.saves) : sumCounts(s.shots);
+            return s ? sumCounts(s.shots) : 0;
           }}
           size={size}
           disabled={Boolean(locked)}
           inactive={!canRecord}
-          activeGoalieId={activeGoalieId}
           onTap={onTapPlayer}
           onLongPress={onLongPressPlayer}
+        />
+
+        {size === "wide" && (
+          <p className="shrink-0 text-center text-xs text-slate-500">
+            Ťuk = naše střela · podržet = trest
+          </p>
+        )}
+
+        <GoalieBar
+          activeGoalie={activeGoalie}
+          saveCount={goalieSaves}
+          canSwitch={goalies.length > 1}
+          size={size}
+          disabled={Boolean(locked)}
+          inactive={!canRecord}
+          onSwitch={onSwitchGoalie}
+          onLongPressGoalie={onLongPressGoalie}
+          onOpponentShot={onOpponentShot}
         />
 
         {/* ------------------------------------------- spodní lišta */}
@@ -638,6 +714,22 @@ export function MatchScreen({ matchId, players, onBack, onChanged }: Props) {
           size={size}
           onClose={() => setDialog(null)}
           onSave={(draft) => void savePenalty(draft)}
+        />
+      )}
+
+      {dialog?.kind === "goaliePick" && (
+        <GoaliePickDialog
+          goalies={goalies}
+          activeGoalieId={activeGoalieId}
+          reason={dialog.reason}
+          onPick={(goalieId) => {
+            const faceoff = dialog.reason === "faceoff";
+            setDialog(null);
+            putGoalieOnIce(goalieId);
+            // Při prvním buly je výběr brankáře součástí jednoho ťuknutí.
+            if (faceoff && state.next) void startPeriod(state.next);
+          }}
+          onClose={() => setDialog(null)}
         />
       )}
 
